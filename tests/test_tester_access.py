@@ -70,7 +70,7 @@ async def make_user(session, telegram_id: int) -> User:
 
 
 @pytest.mark.asyncio
-async def test_allowlisted_tester_claims_full_access_without_subscription_or_dev(tmp_path) -> None:
+async def test_allowlisted_tester_gets_persistent_access_without_subscription_or_dev(tmp_path) -> None:
     session, engine = await make_session(tmp_path)
     identity = TelegramIdentity(TESTER_ID, "Tester")
     current_settings = settings()
@@ -78,12 +78,16 @@ async def test_allowlisted_tester_claims_full_access_without_subscription_or_dev
         user = await make_user(session, TESTER_ID)
 
         initial = await get_access(identity, session, current_settings)
+        reopened = await get_access(identity, session, current_settings)
         claimed = await refresh_access(identity, session, current_settings)
         context = await require_active(identity, session, current_settings)
         program_payload = await program(context, current_settings)
         profile_payload = await profile(context, current_settings)
 
-        assert initial["status"] == "free"
+        assert initial["status"] == "active"
+        assert initial["plan"] == "tester"
+        assert reopened["status"] == "active"
+        assert reopened["plan"] == "tester"
         assert claimed["status"] == "active"
         assert claimed["plan"] == "tester"
         assert program_payload["is_program_dev"] is False

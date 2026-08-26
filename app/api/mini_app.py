@@ -164,8 +164,8 @@ async def get_access(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     user, _ = await load_user(session, identity.telegram_id)
-    # Tester access is claimed through the existing paywall action, not exposed on initial load.
-    return await access_payload(session, user, settings, include_tester=False)
+    # Tester access is virtual and is resolved from verified Telegram initData on every load.
+    return await access_payload(session, user, settings, include_tester=True)
 
 
 @router.post("/access/refresh")
