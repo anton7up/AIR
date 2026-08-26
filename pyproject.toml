@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "air-nicotine-free"
+version = "0.1.0"
+description = "AIR Telegram service foundation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.13,<4",
+    "aiosqlite>=0.20,<1",
+    "fastapi>=0.115,<1",
+    "pydantic-settings>=2.5,<3",
+    "python-dotenv>=1.0,<2",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "uvicorn[standard]>=0.30,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.14,<2",
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.24,<1",
+    "ruff>=0.9,<1",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = ["B008", "E501", "UP017"]
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true

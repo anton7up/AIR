@@ -1,0 +1,70 @@
+from app.onboarding.schema import InputType, Option, Question
+
+QUESTIONS: dict[str, Question] = {
+    "gender": Question(
+        key="gender",
+        text="Укажи свой пол:",
+        input_type=InputType.CHOICE,
+        options=(Option("Мужской", "male"), Option("Женский", "female")),
+        next_key="had_quit_attempts",
+    ),
+    "had_quit_attempts": Question(
+        key="had_quit_attempts",
+        text="Раньше уже были попытки отказаться от никотина?",
+        input_type=InputType.CHOICE,
+        options=(Option("Да", True), Option("Нет", False)),
+        next_key="nicotine_type",
+    ),
+    "nicotine_type": Question(
+        key="nicotine_type",
+        text="Какой вид никотина ты употребляешь?",
+        input_type=InputType.CHOICE,
+        options=(
+            Option("Сигареты", "cigarettes"),
+            Option("IQOS / Glo", "heated_tobacco"),
+            Option("Электронные сигареты / вейп", "vape"),
+            Option("Снюс", "snus"),
+            Option("Кальян", "hookah"),
+        ),
+        transitions={
+            "cigarettes": "cig_daily",
+            "heated_tobacco": "heated_daily",
+            "vape": "vape_daily_ml",
+            "snus": "snus_daily_pouches",
+            "hookah": "hookah_weekly_sessions",
+        },
+    ),
+    "cig_daily": Question("cig_daily", "Сколько сигарет ты выкуриваешь в день?", InputType.NUMBER, next_key="cig_years", minimum=0.1, maximum=300),
+    "cig_years": Question("cig_years", "Сколько лет ты куришь?", InputType.NUMBER, next_key="cig_pack_size", minimum=0.01, maximum=100),
+    "cig_pack_size": Question("cig_pack_size", "Сколько сигарет в пачке?", InputType.NUMBER, next_key="cig_pack_price", minimum=1, maximum=200),
+    "cig_pack_price": Question("cig_pack_price", "Сколько стоит одна пачка в рублях?", InputType.NUMBER, next_key="acquisition_source", minimum=1, maximum=100000),
+    "heated_daily": Question("heated_daily", "Сколько стиков ты используешь в день?", InputType.NUMBER, next_key="heated_years", minimum=0.1, maximum=300),
+    "heated_years": Question("heated_years", "Сколько лет ты используешь стики?", InputType.NUMBER, next_key="heated_pack_size", minimum=0.01, maximum=100),
+    "heated_pack_size": Question("heated_pack_size", "Сколько стиков в пачке?", InputType.NUMBER, next_key="heated_pack_price", minimum=1, maximum=200),
+    "heated_pack_price": Question("heated_pack_price", "Сколько стоит пачка стиков в рублях?", InputType.NUMBER, next_key="acquisition_source", minimum=1, maximum=100000),
+    "vape_daily_ml": Question("vape_daily_ml", "Примерно сколько мл жидкости уходит в день?", InputType.NUMBER, next_key="vape_years", minimum=0.01, maximum=500),
+    "vape_years": Question("vape_years", "Сколько лет ты используешь вейп?", InputType.NUMBER, next_key="vape_bottle_ml", minimum=0.01, maximum=100),
+    "vape_bottle_ml": Question("vape_bottle_ml", "Какой объём флакона жидкости в мл?", InputType.NUMBER, next_key="vape_bottle_price", minimum=0.1, maximum=5000),
+    "vape_bottle_price": Question("vape_bottle_price", "Сколько стоит такой флакон в рублях?", InputType.NUMBER, next_key="acquisition_source", minimum=1, maximum=100000),
+    "snus_daily_pouches": Question("snus_daily_pouches", "Сколько пакетиков снюса ты используешь в день?", InputType.NUMBER, next_key="snus_years", minimum=0.1, maximum=300),
+    "snus_years": Question("snus_years", "Сколько лет ты используешь снюс?", InputType.NUMBER, next_key="snus_can_size", minimum=0.01, maximum=100),
+    "snus_can_size": Question("snus_can_size", "Сколько пакетиков в банке?", InputType.NUMBER, next_key="snus_can_price", minimum=1, maximum=500),
+    "snus_can_price": Question("snus_can_price", "Сколько стоит одна банка в рублях?", InputType.NUMBER, next_key="acquisition_source", minimum=1, maximum=100000),
+    "hookah_weekly_sessions": Question("hookah_weekly_sessions", "Сколько кальянных сессий у тебя обычно бывает в неделю?", InputType.NUMBER, next_key="hookah_years", minimum=0.01, maximum=100),
+    "hookah_years": Question("hookah_years", "Сколько лет ты куришь кальян?", InputType.NUMBER, next_key="hookah_session_price", minimum=0.01, maximum=100),
+    "hookah_session_price": Question("hookah_session_price", "Сколько в среднем стоит одна сессия в рублях?", InputType.NUMBER, next_key="acquisition_source", minimum=1, maximum=1000000),
+    "acquisition_source": Question(
+        key="acquisition_source",
+        text="Как ты узнал об AIR?",
+        input_type=InputType.CHOICE,
+        options=tuple(Option(label, value) for label, value in (
+            ("Telegram", "telegram"), ("TikTok", "tiktok"),
+            ("YouTube", "youtube"), ("Instagram", "instagram"),
+            ("От друзей", "friends"), ("Нашёл сам", "self"),
+            ("Другое", "other"),
+        )),
+    ),
+}
+
+FIRST_QUESTION_KEY = "gender"
+
