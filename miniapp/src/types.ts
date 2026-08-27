@@ -1,8 +1,11 @@
+export type AccessLinks = { support: string | null; terms: string | null; privacy: string | null };
+
 export type Access = {
   status: "free" | "active" | "expired";
   plan: string;
   ends_at: string | null;
   development_activation_available: boolean;
+  links: AccessLinks;
 };
 
 export type Recovery = { hours: number; title: string; description: string; reached: boolean };
@@ -109,5 +112,5 @@ export type Profile = {
   access_status: string;
   plan: string;
   motivation: string | null;
-  links: { support: string | null; terms: string | null; privacy: string | null };
+  links: AccessLinks;
 };

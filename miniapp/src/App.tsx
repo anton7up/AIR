@@ -3,8 +3,10 @@ import { api, ApiError } from "./api/client";
 import { BottomNav, type Tab } from "./components/BottomNav";
 import { ErrorState, Loading } from "./components/Loading";
 import { NicotineDesireModal } from "./components/NicotineDesireModal";
+import { shouldShowPaywall, transitionPaywall, type PaywallView } from "./payments/flow";
 import { Home } from "./screens/Home";
 import { Paywall } from "./screens/Paywall";
+import { Plans } from "./screens/Plans";
 import { Profile } from "./screens/Profile";
 import { Program } from "./screens/Program";
 import { Progress } from "./screens/Progress";
@@ -23,6 +25,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [desireOpen, setDesireOpen] = useState(false);
+  const [paywallView, setPaywallView] = useState<PaywallView>("landing");
 
   const loadAccess = useCallback(async () => {
     setLoading(true); setError("");
@@ -85,7 +88,12 @@ export default function App() {
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} retry={() => { setError(""); void loadAccess(); }} />;
   if (!access) return <ErrorState message="Открой AIR из Telegram-бота." retry={loadAccess} />;
-  if (access.status !== "active") return <Paywall access={access} activate={activate} refresh={() => void refreshAccess()} busy={busy} />;
+  if (shouldShowPaywall(access.status)) {
+    if (paywallView === "plans" && !access.development_activation_available) {
+      return <Plans links={access.links} onBack={() => setPaywallView(view => transitionPaywall(view, "back"))} />;
+    }
+    return <Paywall access={access} activate={activate} openPlans={() => setPaywallView(view => transitionPaywall(view, "open_plans"))} refresh={() => void refreshAccess()} busy={busy} />;
+  }
   const screen = tab === "home" && data.dashboard ? <Home data={data.dashboard} openProgram={() => setTab("program")} openDesire={() => setDesireOpen(true)} startAttempt={handleStartAttempt} />
     : tab === "program" && data.program ? <Program data={data.program} onGoSos={() => setTab("sos")} onGoProgress={() => setTab("progress")} />
     : tab === "sos" ? <Sos onAttemptChanged={refreshAttemptData} onAttemptRestarted={handleAttemptRestarted} onGoHome={() => setTab("home")} />

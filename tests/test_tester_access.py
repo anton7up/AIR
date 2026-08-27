@@ -39,6 +39,9 @@ def settings(*, tester_enabled: bool = True, tester_ids: str = str(TESTER_ID)) -
         dev_telegram_ids=str(DEV_ID),
         tester_access_enabled=tester_enabled,
         tester_telegram_ids=tester_ids,
+        support_url="https://example.com/support",
+        terms_url="https://example.com/terms",
+        privacy_url="https://example.com/privacy",
     )
 
 
@@ -86,6 +89,11 @@ async def test_allowlisted_tester_gets_persistent_access_without_subscription_or
 
         assert initial["status"] == "active"
         assert initial["plan"] == "tester"
+        assert initial["links"] == {
+            "support": "https://example.com/support",
+            "terms": "https://example.com/terms",
+            "privacy": "https://example.com/privacy",
+        }
         assert reopened["status"] == "active"
         assert reopened["plan"] == "tester"
         assert claimed["status"] == "active"

@@ -17,3 +17,12 @@ describe("custom input CTA styles", () => {
     expect(styles).not.toContain("air-custom-editor-open .custom-editor{padding-bottom");
   });
 });
+
+describe("plans screen mobile layout", () => {
+  it.each([390, 393, 430])("keeps the %ipx viewport within its width", width => {
+    expect(width).toBeGreaterThanOrEqual(390);
+    expect(styles).toContain(".plans-screen{box-sizing:border-box;width:100%;max-width:520px");
+    expect(styles).toContain("overflow-x:clip");
+    expect(styles).toContain(".plan-card{position:relative;min-width:0");
+  });
+});
