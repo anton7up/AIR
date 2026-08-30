@@ -26,3 +26,16 @@ describe("plans screen mobile layout", () => {
     expect(styles).toContain(".plan-card{position:relative;min-width:0");
   });
 });
+
+describe("paywall AIR logo text", () => {
+  it.each([390, 393, 430])("keeps the logo geometry unchanged at %ipx", () => {
+    expect(styles).toContain(".paywall-orb { width:104px;height:104px;border-radius:50%;margin:4px auto 22px");
+  });
+
+  it("uses a dedicated theme-aware contrast token without changing the glow", () => {
+    expect(styles).toContain("color:var(--air-logo-text,#174d3e)");
+    expect(styles).toContain("--air-logo-text:#174d3e");
+    expect(styles).toContain("--air-logo-text:#123b31");
+    expect(styles).toContain("box-shadow:0 18px 50px rgba(52,130,104,.2)");
+  });
+});

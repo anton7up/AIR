@@ -21,6 +21,8 @@ describe("Telegram theme tokens", () => {
     expect(contrast(tokens.border, tokens.surface)).toBeGreaterThanOrEqual(1.3);
     expect(contrast(tokens.borderStrong, tokens.surface)).toBeGreaterThan(contrast(tokens.border, tokens.surface));
     expect(contrast(tokens.onAccent, tokens.accent)).toBeGreaterThanOrEqual(4.2);
+    expect(contrast(tokens.logoText, "#abdcca")).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(tokens.logoText, "#eafff6")).toBeGreaterThanOrEqual(4.5);
     expect(tokens.page).not.toBe(tokens.surface);
     expect(tokens.surfaceElevated).not.toBe(tokens.surface);
   });

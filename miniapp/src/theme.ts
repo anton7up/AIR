@@ -52,6 +52,7 @@ export function themePreviewTokens(params: TelegramThemeParams, scheme: "light" 
     borderStrong: mixHex(text, surface, scheme === "dark" ? 0.36 : 0.32),
     accent: scheme === "dark" ? "#73c7a9" : "#2c765f",
     onAccent: scheme === "dark" ? "#10241e" : "#ffffff",
+    logoText: scheme === "dark" ? "#123b31" : "#174d3e",
   };
 }
 
