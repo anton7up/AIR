@@ -17,7 +17,7 @@ export const ACCESS_PLANS: readonly AccessPlan[] = [
   {
     id: "air_30_days",
     name: "30 дней",
-    priceRub: 1_000,
+    priceRub: 990,
     description: "Полный доступ к AIR на 30 дней.",
     features: ["программа 30 дней", "SOS", "персональный план", "прогресс и достижения"],
     cta: "Выбрать 30 дней",
@@ -25,7 +25,7 @@ export const ACCESS_PLANS: readonly AccessPlan[] = [
   {
     id: "air_lifetime",
     name: "Навсегда",
-    priceRub: 2_500,
+    priceRub: 2_450,
     description: "Один платёж — доступ без ограничения по времени.",
     features: ["всё из AIR", "постоянный доступ", "сохранённый прогресс"],
     cta: "Получить навсегда",
