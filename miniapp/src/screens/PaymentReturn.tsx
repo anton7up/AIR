@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Clock3 } from "lucide-react";
 import { paymentApi } from "../api/client";
+import { AIR_TELEGRAM_URL } from "../telegram";
 
 type OrderStatus = {
   order_id: number;
@@ -52,12 +53,11 @@ export function PaymentReturn({ orderId, onOpenAir }: { orderId: number; onOpenA
 }
 
 export function ExternalPaymentReturn() {
-  const returnToAir = () => window.close();
   return <main className="payment-return-screen">
     <CheckCircle2 size={48} />
     <p className="eyebrow">AIR PREMIUM</p>
     <h1>Оплата завершена</h1>
     <p>Вернитесь в Telegram — доступ активируется автоматически.</p>
-    <button className="primary-button" type="button" onClick={returnToAir}>Вернуться в AIR</button>
+    <a className="primary-button" href={AIR_TELEGRAM_URL}>Вернуться в AIR</a>
   </main>;
 }

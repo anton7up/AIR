@@ -9,6 +9,7 @@ import { Paywall } from "./Paywall";
 import { PaymentCheckout } from "./PaymentCheckout";
 import { ExternalPaymentReturn } from "./PaymentReturn";
 import { Plans } from "./Plans";
+import { AIR_BOT_USERNAME, AIR_TELEGRAM_URL } from "../telegram";
 
 const access: Access = {
   status: "free",
@@ -119,6 +120,10 @@ describe("AIR paywall plans flow", () => {
     expect(markup).toContain("Оплата завершена");
     expect(markup).toContain("Вернитесь в Telegram");
     expect(markup).toContain("Вернуться в AIR");
+    expect(AIR_BOT_USERNAME).toBe("airnosmokebot");
+    expect(AIR_TELEGRAM_URL).toBe("https://t.me/airnosmokebot");
+    expect(markup).toContain('href="https://t.me/airnosmokebot"');
+    expect(markup).not.toContain("window.close");
     expect(markup).not.toContain("Открой AIR из Telegram");
   });
 
