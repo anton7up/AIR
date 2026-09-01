@@ -161,3 +161,61 @@ async def test_schema_adds_receipt_email_to_existing_users(
     assert "receipt_email" in columns
     assert "payment_orders" in tables
     await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_schema_adds_receipt_tracking_to_existing_payment_orders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.db.session as db_session
+
+    test_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'legacy-payments.db'}"
+    )
+    async with test_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "CREATE TABLE users ("
+                "id INTEGER PRIMARY KEY, telegram_id BIGINT NOT NULL, "
+                "telegram_first_name VARCHAR(255) NOT NULL)"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE TABLE payment_orders ("
+                "id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, "
+                "plan_id VARCHAR(50) NOT NULL, amount NUMERIC(12, 2) NOT NULL, "
+                "currency VARCHAR(3) NOT NULL, status VARCHAR(20) NOT NULL, "
+                "idempotency_key VARCHAR(36) NOT NULL, receipt_email VARCHAR(320) NOT NULL)"
+            )
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO payment_orders "
+                "(id, user_id, plan_id, amount, currency, status, idempotency_key, receipt_email) "
+                "VALUES (1, 1, 'air_30_days', 990, 'RUB', 'succeeded', 'legacy-key', "
+                "'buyer@example.com')"
+            )
+        )
+    monkeypatch.setattr(db_session, "engine", test_engine)
+
+    await db_session.init_db()
+
+    async with test_engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda sync_connection: {
+                column["name"]
+                for column in inspect(sync_connection).get_columns("payment_orders")
+            }
+        )
+        row = (
+            await connection.execute(
+                text(
+                    "SELECT receipt_status, receipt_sent_at FROM payment_orders WHERE id = 1"
+                )
+            )
+        ).one()
+    assert {"receipt_status", "receipt_sent_at"} <= columns
+    assert row.receipt_status == "pending"
+    assert row.receipt_sent_at is None
+    await test_engine.dispose()

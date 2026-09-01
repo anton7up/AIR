@@ -43,6 +43,24 @@ async def init_db() -> None:
                     await connection.execute(
                         text("ALTER TABLE users ADD COLUMN receipt_email VARCHAR(320)")
                     )
+
+                payment_columns = await connection.run_sync(
+                    lambda sync_connection: {
+                        column["name"]
+                        for column in inspect(sync_connection).get_columns("payment_orders")
+                    }
+                )
+                if "receipt_status" not in payment_columns:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE payment_orders ADD COLUMN receipt_status "
+                            "VARCHAR(20) NOT NULL DEFAULT 'pending'"
+                        )
+                    )
+                if "receipt_sent_at" not in payment_columns:
+                    await connection.execute(
+                        text("ALTER TABLE payment_orders ADD COLUMN receipt_sent_at DATETIME")
+                    )
                 await connection.execute(
                     text(
                         "UPDATE users SET program_started_at = quit_started_at "

@@ -17,6 +17,7 @@ const access: Access = {
   ends_at: null,
   development_activation_available: false,
   receipt_email: null,
+  is_admin: false,
   links: { support: "https://example.com/support", terms: null, privacy: null },
 };
 
@@ -29,6 +30,13 @@ describe("AIR paywall plans flow", () => {
     expect(landing).toContain("Получить доступ к AIR");
     expect(transitionPaywall("landing", "open_plans")).toBe("plans");
     expect(transitionPaywall("plans", "back")).toBe("landing");
+  });
+
+  it("hides payment admin from regular users and shows it only from backend access", () => {
+    const regular = renderToStaticMarkup(<Paywall access={access} activate={() => undefined} openPlans={() => undefined} refresh={() => undefined} busy={false} />);
+    const admin = renderToStaticMarkup(<Paywall access={{ ...access, is_admin: true }} activate={() => undefined} openPlans={() => undefined} refresh={() => undefined} busy={false} />);
+    expect(regular).not.toContain("Админка платежей");
+    expect(admin).toContain("Админка платежей");
   });
 
   it("keeps product IDs and RUB prices centralized", () => {

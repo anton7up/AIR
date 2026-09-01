@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     dev_telegram_ids: str = ""
     tester_access_enabled: bool = False
     tester_telegram_ids: str = ""
+    admin_telegram_ids: str = ""
+    admin_panel_password: SecretStr | None = None
+    admin_session_ttl_seconds: int = 28800
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     telegram_init_data_max_age_seconds: int = 86400
     support_url: str | None = None
@@ -71,6 +74,21 @@ class Settings(BaseSettings):
 
     def is_tester(self, telegram_id: int) -> bool:
         return self.tester_access_enabled and telegram_id in self.tester_access_telegram_ids
+
+    @property
+    def admin_telegram_id_set(self) -> set[int]:
+        ids: set[int] = set()
+        for raw_id in self.admin_telegram_ids.split(","):
+            value = raw_id.strip()
+            if value:
+                try:
+                    ids.add(int(value))
+                except ValueError:
+                    continue
+        return ids
+
+    def is_admin(self, telegram_id: int) -> bool:
+        return telegram_id in self.admin_telegram_id_set
 
     model_config = SettingsConfigDict(
         env_file=".env",

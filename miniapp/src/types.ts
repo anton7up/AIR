@@ -6,6 +6,7 @@ export type Access = {
   ends_at: string | null;
   development_activation_available: boolean;
   receipt_email: string | null;
+  is_admin: boolean;
   links: AccessLinks;
 };
 

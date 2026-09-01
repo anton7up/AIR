@@ -15,9 +15,17 @@ import { Sos } from "./screens/Sos";
 import type { Access, Dashboard, Profile as ProfileType, Program as ProgramType, Progress as ProgressType } from "./types";
 import { setupTelegramTheme } from "./theme";
 import { useKeyboardAwareViewport } from "./hooks/useKeyboardAwareViewport";
+import { AdminPayments } from "./screens/AdminPayments";
 
 type Data = { dashboard?: Dashboard; program?: ProgramType; progress?: ProgressType; profile?: ProfileType };
 export default function App() {
+  if (window.location.pathname.replace(/\/$/, "") === "/admin/payments") {
+    return <AdminPayments />;
+  }
+  return <AirApplication />;
+}
+
+function AirApplication() {
   useKeyboardAwareViewport();
   const [access, setAccess] = useState<Access | null>(null);
   const [tab, setTab] = useState<Tab>("home");
@@ -115,6 +123,6 @@ export default function App() {
     : tab === "program" && data.program ? <Program data={data.program} onGoSos={() => setTab("sos")} onGoProgress={() => setTab("progress")} />
     : tab === "sos" ? <Sos onAttemptChanged={refreshAttemptData} onAttemptRestarted={handleAttemptRestarted} onGoHome={() => setTab("home")} />
     : tab === "progress" && data.progress ? <Progress data={data.progress} />
-    : tab === "profile" && data.profile ? <Profile data={data.profile} /> : <Loading />;
+    : tab === "profile" && data.profile ? <Profile data={data.profile} isAdmin={access.is_admin} /> : <Loading />;
   return <div className="app-shell">{screen}{desireOpen && <NicotineDesireModal onClose={() => setDesireOpen(false)} />}<BottomNav tab={tab} onChange={setTab} /></div>;
 }

@@ -1,13 +1,13 @@
-import { ChevronRight, CircleHelp, FileLock2, FileText, Gem, ShieldCheck, UserRound } from "lucide-react";
+import { ChevronRight, CircleHelp, FileLock2, FileText, Gem, ReceiptText, ShieldCheck, UserRound } from "lucide-react";
 import type { Profile as ProfileType } from "../types";
 const TYPES: Record<string, string> = { cigarettes: "Сигареты", heated_tobacco: "IQOS / Glo", vape: "Вейп", snus: "Снюс", hookah: "Кальян" };
-export function Profile({ data }: { data: ProfileType }) {
+export function Profile({ data, isAdmin }: { data: ProfileType; isAdmin: boolean }) {
   const open = (url: string | null) => url && window.open(url, "_blank", "noopener");
   const isDeveloper = data.plan === "developer";
   return <main className="screen"><header className="profile-header"><div className="avatar"><UserRound /></div><h1>{data.first_name}</h1><p>{data.username ? `@${data.username}` : "Telegram-пользователь"}</p></header>
     <section className="premium-card"><div><Gem /><span>{isDeveloper ? "AIR Developer" : "AIR Premium"}</span></div><strong><ShieldCheck size={16} /> {isDeveloper ? "DEV access" : "Активен"}</strong><p>{isDeveloper ? "Developer-доступ активен без платёжной операции." : "Твой персональный путь и вся статистика доступны."}</p></section>
     <section className="profile-facts"><div><span>Тип никотина</span><strong>{TYPES[data.nicotine_type] || "Другой вид никотина"}</strong></div><div><span>Исходный уровень</span><strong>{data.daily_units} {data.unit_label} в день</strong></div><div><span>Начало отказа</span><strong>{data.quit_started_at ? new Date(data.quit_started_at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "Не начат"}</strong></div><div><span>Регистрация</span><strong>{new Date(data.registered_at).toLocaleDateString("ru-RU")}</strong></div></section>
-    <section className="menu-list"><button><Gem /><span>Управление доступом</span><ChevronRight /></button><button onClick={() => open(data.links.support)}><CircleHelp /><span>Поддержка</span><ChevronRight /></button><button onClick={() => open(data.links.terms)}><FileText /><span>Условия использования</span><ChevronRight /></button><button onClick={() => open(data.links.privacy)}><FileLock2 /><span>Политика конфиденциальности</span><ChevronRight /></button></section>
+    <section className="menu-list"><button><Gem /><span>Управление доступом</span><ChevronRight /></button>{isAdmin && <button onClick={() => window.location.assign("/admin/payments")}><ReceiptText /><span>Админка платежей</span><ChevronRight /></button>}<button onClick={() => open(data.links.support)}><CircleHelp /><span>Поддержка</span><ChevronRight /></button><button onClick={() => open(data.links.terms)}><FileText /><span>Условия использования</span><ChevronRight /></button><button onClick={() => open(data.links.privacy)}><FileLock2 /><span>Политика конфиденциальности</span><ChevronRight /></button></section>
     <p className="version">AIR · первый шаг к свободному дыханию</p>
   </main>;
 }

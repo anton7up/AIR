@@ -37,3 +37,10 @@ export function api<T>(path: string, options?: RequestInit): Promise<T> {
 export function paymentApi<T>(path: string, options?: RequestInit): Promise<T> {
   return request<T>(`/api/v1/payments${path}`, options);
 }
+
+export function adminApi<T>(path: string, options?: RequestInit): Promise<T> {
+  return request<T>(`/api/v1/admin${path}`, {
+    ...options,
+    credentials: "same-origin",
+  });
+}

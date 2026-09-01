@@ -19,6 +19,7 @@ export function Paywall({ access, activate, openPlans, refresh, busy }: { access
     <div className="paywall-actions">
       <button className="primary-button" disabled={busy} onClick={access.development_activation_available ? activate : openPlans}>{busy ? "Подключаем…" : access.development_activation_available ? "Получить тестовый доступ" : "Получить доступ к AIR"}</button>
       <button className="text-button" disabled={busy} onClick={refresh}>У меня уже есть доступ</button>
+      {access.is_admin && <button className="text-button" onClick={() => window.location.assign("/admin/payments")}>Админка платежей</button>}
       {access.status === "expired" && <p className="fine-print">Предыдущий доступ завершён</p>}
     </div>
   </main>;

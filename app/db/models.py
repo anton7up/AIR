@@ -51,6 +51,11 @@ class PaymentOrderStatus(StrEnum):
     CANCELED = "canceled"
 
 
+class ReceiptStatus(StrEnum):
+    PENDING = "pending"
+    SENT = "sent"
+
+
 class QuitAttemptStatus(StrEnum):
     ACTIVE = "active"
     FINISHED = "finished"
@@ -208,6 +213,14 @@ class PaymentOrder(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    receipt_status: Mapped[ReceiptStatus] = mapped_column(
+        enum_column(ReceiptStatus, "receipt_status"),
+        default=ReceiptStatus.PENDING,
+        server_default=ReceiptStatus.PENDING.value,
+    )
+    receipt_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     user: Mapped[User] = relationship(back_populates="payment_orders")
 
