@@ -47,6 +47,12 @@ async def admin_payments_page() -> FileResponse:
 
 @app.get("/personal-data-consent", include_in_schema=False)
 @app.get("/personal-data-consent/", include_in_schema=False)
+@app.get("/privacy", include_in_schema=False)
+@app.get("/privacy/", include_in_schema=False)
+@app.get("/offer", include_in_schema=False)
+@app.get("/offer/", include_in_schema=False)
+@app.get("/terms", include_in_schema=False)
+@app.get("/terms/", include_in_schema=False)
 async def personal_data_consent_page() -> FileResponse:
     index_file = mini_app_dist / "index.html"
     if not index_file.is_file():

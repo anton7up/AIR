@@ -40,9 +40,10 @@ export function Plans({ links, initialEmail, onBack, onPaymentSucceeded }: { lin
   };
 
   const legalLinks = [
-    ["Условия использования", links.terms],
-    ["Политика конфиденциальности", links.privacy],
-    ["Поддержка", links.support],
+    ["Условия использования", "/terms"],
+    ["Публичная оферта", "/offer"],
+    ["Политика конфиденциальности", "/privacy"],
+    ["Поддержка", links.support ?? "mailto:anton.d.pravdin@gmail.com"],
   ].filter((item): item is [string, string] => Boolean(item[1]));
 
   if (pendingPayment) {

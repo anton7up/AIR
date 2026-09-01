@@ -185,3 +185,22 @@ def test_all_program_and_sos_routes_have_backend_consent_guard() -> None:
     assert "/api/v1/mini-app/program/start" in guarded_paths
     assert "/api/v1/mini-app/sos/start" in guarded_paths
     assert "/api/v1/mini-app/responses" in guarded_paths
+
+
+def test_legal_document_routes_are_public() -> None:
+    from app.api.main import app
+
+    expected = {
+        "/personal-data-consent",
+        "/privacy",
+        "/offer",
+        "/terms",
+    }
+    routes = {
+        route_item.path: route_item
+        for route_item in app.routes
+        if getattr(route_item, "path", "") in expected
+    }
+    assert set(routes) == expected
+    for route_item in routes.values():
+        assert route_item.dependant.dependencies == []

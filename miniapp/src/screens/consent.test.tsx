@@ -14,9 +14,11 @@ describe("personal data consent", () => {
     expect(html).toContain("Не согласен");
   });
 
-  it("renders a separate legal placeholder page", () => {
+  it("renders the complete consent document", () => {
     const html = renderToStaticMarkup(<PersonalDataConsent />);
     expect(html).toContain("Согласие на обработку персональных данных");
-    expect(html).toContain("полный текст юридического документа");
+    expect(html).toContain("Правдину Антону Денисовичу");
+    expect(html).toContain("Факт предоставления согласия, дата, время и версия согласия сохраняются AIR");
+    expect(html).not.toContain("Здесь будет размещён");
   });
 });

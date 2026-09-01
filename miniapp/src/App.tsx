@@ -18,6 +18,7 @@ import { useKeyboardAwareViewport } from "./hooks/useKeyboardAwareViewport";
 import { AdminPayments } from "./screens/AdminPayments";
 import { ConsentScreen } from "./screens/Consent";
 import { PersonalDataConsent } from "./screens/PersonalDataConsent";
+import { PrivacyPolicy, PublicOffer, TermsOfUse } from "./screens/LegalDocuments";
 import type { ConsentStatus } from "./types";
 
 type Data = { dashboard?: Dashboard; program?: ProgramType; progress?: ProgressType; profile?: ProfileType };
@@ -27,6 +28,9 @@ export default function App() {
     return <AdminPayments />;
   }
   if (pathname === "/personal-data-consent") return <PersonalDataConsent />;
+  if (pathname === "/privacy") return <PrivacyPolicy />;
+  if (pathname === "/offer") return <PublicOffer />;
+  if (pathname === "/terms") return <TermsOfUse />;
   return <AirApplication />;
 }
 
