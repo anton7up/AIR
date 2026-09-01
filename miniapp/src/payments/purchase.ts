@@ -1,27 +1,54 @@
+import { paymentApi } from "../api/client";
 import { getAccessPlan, type PlanId } from "./plans";
 
 export type PaymentAnalyticsEvent = "paywall_view" | "plan_selected" | "purchase_started";
 
 export type PurchaseStartResult = {
-  status: "unavailable";
-  planId: PlanId;
-  message: string;
+  order_id: number;
+  payment_id: string;
+  confirmation_url: string;
 };
+
+type PaymentRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export function emitPaymentEvent(name: PaymentAnalyticsEvent, planId?: PlanId) {
   if (typeof window === "undefined" || typeof CustomEvent === "undefined") return;
   window.dispatchEvent(new CustomEvent("air:payment-event", { detail: { name, planId } }));
 }
 
-// YooKassa integration will replace only this function's temporary result.
-// It must never grant access or create a subscription on the client.
-export function startPurchase(planId: PlanId): PurchaseStartResult {
+export function isValidReceiptEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
+export async function startPurchase(
+  planId: PlanId,
+  email: string,
+  request: PaymentRequest = paymentApi,
+): Promise<PurchaseStartResult> {
   getAccessPlan(planId);
   emitPaymentEvent("plan_selected", planId);
   emitPaymentEvent("purchase_started", planId);
-  return {
-    status: "unavailable",
-    planId,
-    message: "Оплата подключается. Скоро здесь можно будет безопасно оформить доступ к AIR.",
-  };
+  const result = await request<PurchaseStartResult>("/create", {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId, email: email.trim() }),
+  });
+  if (!result.confirmation_url) throw new Error("Ссылка на оплату не получена. Попробуй ещё раз.");
+  return result;
+}
+
+export function canStartPurchase(busyPlanId: PlanId | null) {
+  return busyPlanId === null;
+}
+
+export function purchaseErrorMessage(error: unknown) {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Не удалось открыть оплату. Попробуй ещё раз.";
+}
+
+export function openConfirmationUrl(
+  url: string,
+  navigate: (target: string) => void = target => window.location.assign(target),
+) {
+  navigate(url);
 }

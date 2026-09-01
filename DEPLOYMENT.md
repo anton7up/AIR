@@ -38,6 +38,9 @@ TELEGRAM_INIT_DATA_MAX_AGE_SECONDS=86400
 SUPPORT_URL=
 TERMS_URL=
 PRIVACY_URL=
+YOOKASSA_SHOP_ID=ВСТАВИТЬ_SHOP_ID
+YOOKASSA_SECRET_KEY=ВСТАВИТЬ_СЕКРЕТНЫЙ_КЛЮЧ
+YOOKASSA_RETURN_URL=https://air.example.com/mini-app/?payment=return
 ```
 
 Compose принудительно задаёт контейнерные `API_HOST`, `API_PORT` и `DATABASE_URL`.
@@ -45,6 +48,12 @@ Compose принудительно задаёт контейнерные `API_HO
 не даёт доступ: backend принимает его лишь при сочетании `APP_ENV=development` и
 `DEV_AUTH_ENABLED=true`. DEV preview работает только при `DEV_PROGRAM_MODE=true` и
 наличии ID из проверенного Telegram `initData` в `DEV_TELEGRAM_IDS`.
+
+Ключ ЮKassa остаётся только в `/opt/air/.env` и не попадает во frontend или Git.
+После запуска добавьте в кабинете ЮKassa webhook
+`https://air.example.com/api/v1/payments/yookassa/webhook` для событий
+`payment.succeeded` и `payment.canceled`. Для текущего production-домена AIR это
+`https://airtgbot.ru/api/v1/payments/yookassa/webhook`.
 
 ## UFW
 

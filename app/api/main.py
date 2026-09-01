@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.mini_app import router as mini_app_router
+from app.api.payments import router as payments_router
 from app.core.config import get_settings
 from app.db.session import init_db
 
@@ -27,6 +28,7 @@ app.add_middleware(
     allow_headers=["X-Telegram-Init-Data", "X-Dev-Telegram-Id", "Content-Type"],
 )
 app.include_router(mini_app_router)
+app.include_router(payments_router)
 
 mini_app_dist = Path(__file__).resolve().parents[2] / "miniapp" / "dist"
 if mini_app_dist.is_dir():

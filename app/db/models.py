@@ -45,6 +45,12 @@ class SubscriptionStatus(StrEnum):
     EXPIRED = "expired"
 
 
+class PaymentOrderStatus(StrEnum):
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    CANCELED = "canceled"
+
+
 class QuitAttemptStatus(StrEnum):
     ACTIVE = "active"
     FINISHED = "finished"
@@ -96,11 +102,15 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
     motivation: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    receipt_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
 
     smoking_profile: Mapped[SmokingProfile | None] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
     )
     subscriptions: Mapped[list[Subscription]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    payment_orders: Mapped[list[PaymentOrder]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     program_completions: Mapped[list[ProgramDayCompletion]] = relationship(
@@ -170,6 +180,36 @@ class Subscription(Base):
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="subscriptions")
+
+
+class PaymentOrder(Base):
+    __tablename__ = "payment_orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    plan_id: Mapped[str] = mapped_column(String(50), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="RUB")
+    status: Mapped[PaymentOrderStatus] = mapped_column(
+        enum_column(PaymentOrderStatus, "payment_order_status"),
+        default=PaymentOrderStatus.PENDING,
+        index=True,
+    )
+    yookassa_payment_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, unique=True, index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(36), unique=True)
+    confirmation_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    receipt_email: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="payment_orders")
 
 
 class ProgramDayCompletion(Base):

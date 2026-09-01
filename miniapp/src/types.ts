@@ -5,6 +5,7 @@ export type Access = {
   plan: string;
   ends_at: string | null;
   development_activation_available: boolean;
+  receipt_email: string | null;
   links: AccessLinks;
 };
 

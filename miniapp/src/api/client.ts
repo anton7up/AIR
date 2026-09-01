@@ -18,8 +18,8 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}/api/v1/mini-app${path}`, {
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
   });
@@ -28,4 +28,12 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw new ApiError(response.status, body.detail || "Ошибка AIR");
   }
   return response.json() as Promise<T>;
+}
+
+export function api<T>(path: string, options?: RequestInit): Promise<T> {
+  return request<T>(`/api/v1/mini-app${path}`, options);
+}
+
+export function paymentApi<T>(path: string, options?: RequestInit): Promise<T> {
+  return request<T>(`/api/v1/payments${path}`, options);
 }

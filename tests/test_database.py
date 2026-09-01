@@ -74,6 +74,7 @@ async def test_schema_initialization_is_safe_when_started_concurrently(
         "nicotine_lapses",
         "sos_actions",
         "user_responses",
+        "payment_orders",
     } <= tables
     await test_engine.dispose()
 
@@ -123,4 +124,40 @@ async def test_schema_adds_sos2_columns_to_legacy_actions(
         )
     assert {"trigger_id", "intensity_before", "intensity_after", "metadata_json", "user_response_id"} <= columns
     assert {"trigger_id", "intensity_before", "intensity_after", "reason_response_id"} <= session_columns
+    await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_schema_adds_receipt_email_to_existing_users(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.db.session as db_session
+
+    test_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'legacy-users.db'}"
+    )
+    async with test_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "CREATE TABLE users ("
+                "id INTEGER PRIMARY KEY, telegram_id BIGINT NOT NULL, "
+                "telegram_first_name VARCHAR(255) NOT NULL)"
+            )
+        )
+    monkeypatch.setattr(db_session, "engine", test_engine)
+
+    await db_session.init_db()
+
+    async with test_engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda sync_connection: {
+                column["name"]
+                for column in inspect(sync_connection).get_columns("users")
+            }
+        )
+        tables = await connection.run_sync(
+            lambda sync_connection: set(inspect(sync_connection).get_table_names())
+        )
+    assert "receipt_email" in columns
+    assert "payment_orders" in tables
     await test_engine.dispose()

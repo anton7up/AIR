@@ -229,6 +229,10 @@ Telegram открывает Web App только по публичному HTTPS
 - `CORS_ORIGINS` — адреса Vite dev server;
 - `TELEGRAM_INIT_DATA_MAX_AGE_SECONDS` — допустимый возраст `initData`;
 - `SUPPORT_URL`, `TERMS_URL`, `PRIVACY_URL` — будущие юридические и support-ссылки.
+- `YOOKASSA_SHOP_ID` — идентификатор магазина ЮKassa, только backend;
+- `YOOKASSA_SECRET_KEY` — секретный ключ ЮKassa, только backend;
+- `YOOKASSA_RETURN_URL` — HTTPS-страница возврата в Mini App, например
+  `https://airtgbot.ru/mini-app/?payment=return`.
 
 Frontend `miniapp/.env`:
 
@@ -254,9 +258,26 @@ npm run lint
 npm run build
 ```
 
-### Перед реальными платежами
+### Оплата через ЮKassa
 
-Потребуется платежный провайдер, серверное создание платежа, проверка webhook-подписи,
-идемпотентное обновление `Subscription`, тарифы/чеки, обработка возвратов и production
-миграции БД. Mini App уже опирается только на абстрактный статус доступа, поэтому менять
-его экраны при подключении оплаты не потребуется.
+Backend создаёт разовый redirect-платёж по `plan_id`; цены 990 ₽ за 30 дней и 2450 ₽
+за бессрочный доступ определяются только серверным каталогом. Доступ выдаётся только
+после повторной проверки платежа через API ЮKassa. Возврат пользователя в Mini App сам
+по себе доступ не активирует.
+
+Production webhook:
+
+```text
+https://airtgbot.ru/api/v1/payments/yookassa/webhook
+```
+
+В личном кабинете ЮKassa подпишите этот URL на события `payment.succeeded` и
+`payment.canceled`. Рекомендуемый production return URL:
+
+```text
+https://airtgbot.ru/mini-app/?payment=return
+```
+
+При старте приложение безопасно добавляет таблицу `payment_orders` и nullable-поле
+`users.receipt_email`. Email используется только как контакт для ручной передачи
+НПД-чека и не отправляется в ЮKassa как фискальный чек 54-ФЗ.

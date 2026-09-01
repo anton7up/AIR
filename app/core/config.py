@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     support_url: str | None = None
     terms_url: str | None = None
     privacy_url: str | None = None
+    yookassa_shop_id: str | None = None
+    yookassa_secret_key: SecretStr | None = None
+    yookassa_return_url: str | None = None
+
+    @property
+    def yookassa_configured(self) -> bool:
+        return bool(
+            self.yookassa_shop_id
+            and self.yookassa_secret_key
+            and self.yookassa_return_url
+        )
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -6,6 +6,7 @@ import { NicotineDesireModal } from "./components/NicotineDesireModal";
 import { shouldShowPaywall, transitionPaywall, type PaywallView } from "./payments/flow";
 import { Home } from "./screens/Home";
 import { Paywall } from "./screens/Paywall";
+import { PaymentReturn } from "./screens/PaymentReturn";
 import { Plans } from "./screens/Plans";
 import { Profile } from "./screens/Profile";
 import { Program } from "./screens/Program";
@@ -26,6 +27,11 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [desireOpen, setDesireOpen] = useState(false);
   const [paywallView, setPaywallView] = useState<PaywallView>("landing");
+  const [returnOrderId, setReturnOrderId] = useState<number | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const value = params.get("payment") === "return" ? Number(params.get("order_id")) : NaN;
+    return Number.isInteger(value) && value > 0 ? value : null;
+  });
 
   const loadAccess = useCallback(async () => {
     setLoading(true); setError("");
@@ -88,9 +94,17 @@ export default function App() {
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} retry={() => { setError(""); void loadAccess(); }} />;
   if (!access) return <ErrorState message="Открой AIR из Telegram-бота." retry={loadAccess} />;
+  if (returnOrderId !== null) {
+    const openAir = () => {
+      window.history.replaceState({}, "", `${window.location.pathname}`);
+      setReturnOrderId(null);
+      void loadAccess();
+    };
+    return <PaymentReturn orderId={returnOrderId} onOpenAir={openAir} />;
+  }
   if (shouldShowPaywall(access.status)) {
     if (paywallView === "plans" && !access.development_activation_available) {
-      return <Plans links={access.links} onBack={() => setPaywallView(view => transitionPaywall(view, "back"))} />;
+      return <Plans links={access.links} initialEmail={access.receipt_email} onBack={() => setPaywallView(view => transitionPaywall(view, "back"))} />;
     }
     return <Paywall access={access} activate={activate} openPlans={() => setPaywallView(view => transitionPaywall(view, "open_plans"))} refresh={() => void refreshAccess()} busy={busy} />;
   }

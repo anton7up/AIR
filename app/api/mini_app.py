@@ -132,6 +132,7 @@ async def access_payload(
         ),
         "ends_at": subscription.ends_at if subscription else None,
         "development_activation_available": settings.development_access_enabled,
+        "receipt_email": user.receipt_email,
         "links": {
             "support": settings.support_url,
             "terms": settings.terms_url,

@@ -39,6 +39,10 @@ async def init_db() -> None:
                     await connection.execute(
                         text("ALTER TABLE users ADD COLUMN program_started_at DATETIME")
                     )
+                if "receipt_email" not in columns:
+                    await connection.execute(
+                        text("ALTER TABLE users ADD COLUMN receipt_email VARCHAR(320)")
+                    )
                 await connection.execute(
                     text(
                         "UPDATE users SET program_started_at = quit_started_at "
