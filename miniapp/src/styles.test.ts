@@ -25,6 +25,14 @@ describe("plans screen mobile layout", () => {
     expect(styles).toContain("overflow-x:clip");
     expect(styles).toContain(".plan-card{position:relative;min-width:0");
   });
+
+  it("uses a larger theme-aware email field with a semantic error state", () => {
+    expect(styles).toContain(".receipt-email input{box-sizing:border-box;width:100%;min-height:58px;padding:0 18px");
+    expect(styles).toContain("--air-error:#a94e42");
+    expect(styles).toContain("--air-error:#ffaaa0");
+    expect(styles).toContain(".receipt-email.has-error input{border-color:var(--air-error)");
+    expect(styles).toContain(".receipt-email-error{");
+  });
 });
 
 describe("paywall AIR logo text", () => {

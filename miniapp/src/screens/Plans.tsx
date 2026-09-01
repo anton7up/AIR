@@ -1,21 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, CreditCard, ShieldCheck } from "lucide-react";
 import { ACCESS_PLANS, formatPlanPrice, type PlanId } from "../payments/plans";
-import { emitPaymentEvent, isValidReceiptEmail, openConfirmationUrl, purchaseErrorMessage, startPurchase } from "../payments/purchase";
+import { closeEmailKeyboardOnEnter, emitPaymentEvent, openConfirmationUrl, purchaseErrorMessage, receiptEmailError, startPurchase } from "../payments/purchase";
 import type { AccessLinks } from "../types";
 
 export function Plans({ links, initialEmail, onBack }: { links: AccessLinks; initialEmail: string | null; onBack: () => void }) {
   const [notice, setNotice] = useState("");
   const [email, setEmail] = useState(initialEmail ?? "");
+  const [emailError, setEmailError] = useState("");
   const [busyPlanId, setBusyPlanId] = useState<PlanId | null>(null);
   const purchaseLocked = useRef(false);
+  const emailInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => emitPaymentEvent("paywall_view"), []);
 
   const choosePlan = async (planId: PlanId) => {
     if (purchaseLocked.current) return;
-    if (!isValidReceiptEmail(email)) {
-      setNotice("Проверь email — на него мы отправим информацию о покупке.");
+    const validationError = receiptEmailError(email);
+    if (validationError) {
+      setEmailError(validationError);
+      setNotice("");
+      emailInputRef.current?.focus();
       return;
     }
     purchaseLocked.current = true;
@@ -46,9 +51,14 @@ export function Plans({ links, initialEmail, onBack }: { links: AccessLinks; ini
       <p>Получишь всю программу, SOS, статистику, персональный план и прогресс.</p>
     </header>
 
-    <label className="receipt-email">
+    <label className={`receipt-email${emailError ? " has-error" : ""}`}>
       <span>Email для получения чека</span>
-      <input type="email" inputMode="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="name@example.com" />
+      <input ref={emailInputRef} type="email" inputMode="email" enterKeyHint="done" autoComplete="email" value={email} aria-invalid={Boolean(emailError)} aria-describedby={emailError ? "receipt-email-error" : undefined} onChange={event => {
+        const value = event.target.value;
+        setEmail(value);
+        if (emailError) setEmailError(receiptEmailError(value));
+      }} onKeyDown={closeEmailKeyboardOnEnter} placeholder="name@example.com" />
+      {emailError && <small id="receipt-email-error" className="receipt-email-error" role="alert">{emailError}</small>}
     </label>
 
     <section className="plan-list" aria-label="Тарифы AIR">

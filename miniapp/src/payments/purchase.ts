@@ -20,6 +20,22 @@ export function isValidReceiptEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+export function receiptEmailError(email: string) {
+  if (!email.trim()) return "Введите email для получения чека";
+  if (!isValidReceiptEmail(email)) return "Введите корректный email";
+  return "";
+}
+
+export function closeEmailKeyboardOnEnter(event: {
+  key: string;
+  preventDefault(): void;
+  currentTarget: { blur(): void };
+}) {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  event.currentTarget.blur();
+}
+
 export async function startPurchase(
   planId: PlanId,
   email: string,

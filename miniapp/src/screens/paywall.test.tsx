@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { shouldShowPaywall, transitionPaywall } from "../payments/flow";
 import { ACCESS_PLANS, PLAN_IDS, formatPlanPrice } from "../payments/plans";
-import { canStartPurchase, isValidReceiptEmail, openConfirmationUrl, purchaseErrorMessage, startPurchase } from "../payments/purchase";
+import { canStartPurchase, closeEmailKeyboardOnEnter, isValidReceiptEmail, openConfirmationUrl, purchaseErrorMessage, receiptEmailError, startPurchase } from "../payments/purchase";
 import type { Access } from "../types";
 import { Paywall } from "./Paywall";
 import { Plans } from "./Plans";
@@ -60,6 +60,21 @@ describe("AIR paywall plans flow", () => {
   it("validates receipt email before purchase", () => {
     expect(isValidReceiptEmail("person@example.com")).toBe(true);
     expect(isValidReceiptEmail("not-an-email")).toBe(false);
+    expect(receiptEmailError("  ")).toBe("Введите email для получения чека");
+    expect(receiptEmailError("person@")).toBe("Введите корректный email");
+    expect(receiptEmailError("person@example.com")).toBe("");
+  });
+
+  it("closes the email keyboard on Enter without starting a purchase", () => {
+    let prevented = false;
+    let blurred = false;
+    closeEmailKeyboardOnEnter({
+      key: "Enter",
+      preventDefault: () => { prevented = true; },
+      currentTarget: { blur: () => { blurred = true; } },
+    });
+    expect(prevented).toBe(true);
+    expect(blurred).toBe(true);
   });
 
   it("prevents another purchase while one is loading", () => {
