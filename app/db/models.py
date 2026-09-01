@@ -108,6 +108,12 @@ class User(Base):
     )
     motivation: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     receipt_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    personal_data_consent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    personal_data_consent_version: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
 
     smoking_profile: Mapped[SmokingProfile | None] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False

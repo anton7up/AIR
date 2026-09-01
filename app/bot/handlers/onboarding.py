@@ -7,11 +7,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.types import User as TelegramUser
 
-from app.bot.keyboards.onboarding import choices_keyboard, open_air_keyboard
+from app.bot.keyboards.onboarding import (
+    choices_keyboard,
+    consent_declined_keyboard,
+    consent_keyboard,
+    open_air_keyboard,
+)
 from app.bot.states.onboarding import OnboardingStates
 from app.bot.texts.messages import (
     INVALID_CHOICE,
     MINI_APP_NOT_READY,
+    PERSONAL_DATA_CONSENT,
+    PERSONAL_DATA_CONSENT_DECLINED,
     WELCOME,
     result_message,
 )
@@ -20,6 +27,13 @@ from app.db.repositories import UserRepository
 from app.db.session import session_factory
 from app.onboarding.engine import InvalidAnswer, OnboardingEngine
 from app.onboarding.schema import InputType, Question
+from app.services.consent import (
+    accept_personal_data_consent,
+    find_telegram_user,
+    get_or_create_telegram_user,
+    has_current_personal_data_consent,
+    personal_data_consent_url,
+)
 from app.services.expenses import ExpenseCalculator
 
 router = Router(name="onboarding")
@@ -33,15 +47,104 @@ async def send_question(message: Message, question: Question) -> None:
     await message.answer(question.text + suffix, reply_markup=keyboard)
 
 
-@router.message(CommandStart())
-async def start_onboarding(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    first_name = message.from_user.first_name if message.from_user else "друг"
+async def begin_questions(message: Message, state: FSMContext, first_name: str) -> None:
     await message.answer(WELCOME.format(first_name=first_name))
     question = engine.first_question()
     await state.set_state(OnboardingStates.answering)
     await state.update_data(current_question=question.key, answers={})
     await send_question(message, question)
+
+
+async def show_consent(message: Message, state: FSMContext) -> None:
+    await state.set_state(OnboardingStates.awaiting_consent)
+    document_url = personal_data_consent_url(get_settings().mini_app_url)
+    await message.answer(
+        PERSONAL_DATA_CONSENT,
+        reply_markup=consent_keyboard(document_url),
+    )
+
+
+@router.message(CommandStart())
+async def start_onboarding(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    telegram_user = message.from_user
+    if telegram_user is None:
+        await message.answer("Не удалось прочитать данные Telegram. Попробуй /start ещё раз.")
+        return
+    async with session_factory() as session:
+        user = await get_or_create_telegram_user(
+            session,
+            telegram_id=telegram_user.id,
+            first_name=telegram_user.first_name,
+            username=telegram_user.username,
+        )
+        accepted = has_current_personal_data_consent(user)
+        await session.commit()
+    if accepted:
+        await begin_questions(message, state, telegram_user.first_name)
+        return
+    await show_consent(message, state)
+
+
+@router.callback_query(OnboardingStates.awaiting_consent, F.data == "consent:accept")
+async def accept_consent(callback: CallbackQuery, state: FSMContext) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    telegram_user = callback.from_user
+    async with session_factory() as session:
+        user = await get_or_create_telegram_user(
+            session,
+            telegram_id=telegram_user.id,
+            first_name=telegram_user.first_name,
+            username=telegram_user.username,
+        )
+        await accept_personal_data_consent(session, user)
+        await session.commit()
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await begin_questions(callback.message, state, telegram_user.first_name)
+
+
+@router.callback_query(OnboardingStates.awaiting_consent, F.data == "consent:decline")
+async def decline_consent(callback: CallbackQuery, state: FSMContext) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await state.set_state(OnboardingStates.consent_declined)
+    await callback.answer()
+    await callback.message.edit_text(
+        PERSONAL_DATA_CONSENT_DECLINED,
+        reply_markup=consent_declined_keyboard(),
+    )
+
+
+@router.callback_query(OnboardingStates.consent_declined, F.data == "consent:return")
+async def return_to_consent(callback: CallbackQuery, state: FSMContext) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await state.set_state(OnboardingStates.awaiting_consent)
+    await callback.answer()
+    await callback.message.edit_text(
+        PERSONAL_DATA_CONSENT,
+        reply_markup=consent_keyboard(
+            personal_data_consent_url(get_settings().mini_app_url)
+        ),
+    )
+
+
+@router.callback_query(OnboardingStates.consent_declined, F.data == "consent:close")
+async def close_consent(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.answer("AIR будет рядом, когда ты решишь вернуться.")
+    if isinstance(callback.message, Message):
+        await callback.message.edit_reply_markup(reply_markup=None)
+
+
+@router.callback_query(F.data == "consent:document_unavailable")
+async def consent_document_unavailable(callback: CallbackQuery) -> None:
+    await callback.answer("Документ скоро будет доступен.", show_alert=True)
 
 
 async def accept_answer(
@@ -51,6 +154,16 @@ async def accept_answer(
     answer: Any,
     telegram_user: TelegramUser | None,
 ) -> None:
+    if telegram_user is None:
+        await message.answer("Не удалось прочитать данные Telegram. Попробуй /start ещё раз.")
+        await state.clear()
+        return
+    async with session_factory() as session:
+        user = await find_telegram_user(session, telegram_user.id)
+        if user is None or not has_current_personal_data_consent(user):
+            await state.clear()
+            await show_consent(message, state)
+            return
     data = await state.get_data()
     answers = dict(data.get("answers", {}))
     answers[question.key] = answer
@@ -60,10 +173,6 @@ async def accept_answer(
         await send_question(message, next_question)
         return
 
-    if telegram_user is None:
-        await message.answer("Не удалось прочитать данные Telegram. Попробуй /start ещё раз.")
-        await state.clear()
-        return
     result = calculator.calculate(answers)
     async with session_factory() as session:
         await UserRepository(session).save_onboarding(

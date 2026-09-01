@@ -16,18 +16,24 @@ import type { Access, Dashboard, Profile as ProfileType, Program as ProgramType,
 import { setupTelegramTheme } from "./theme";
 import { useKeyboardAwareViewport } from "./hooks/useKeyboardAwareViewport";
 import { AdminPayments } from "./screens/AdminPayments";
+import { ConsentScreen } from "./screens/Consent";
+import { PersonalDataConsent } from "./screens/PersonalDataConsent";
+import type { ConsentStatus } from "./types";
 
 type Data = { dashboard?: Dashboard; program?: ProgramType; progress?: ProgressType; profile?: ProfileType };
 export default function App() {
-  if (window.location.pathname.replace(/\/$/, "") === "/admin/payments") {
+  const pathname = window.location.pathname.replace(/\/$/, "");
+  if (pathname === "/admin/payments") {
     return <AdminPayments />;
   }
+  if (pathname === "/personal-data-consent") return <PersonalDataConsent />;
   return <AirApplication />;
 }
 
 function AirApplication() {
   useKeyboardAwareViewport();
   const [access, setAccess] = useState<Access | null>(null);
+  const [consent, setConsent] = useState<ConsentStatus | null>(null);
   const [tab, setTab] = useState<Tab>("home");
   const [data, setData] = useState<Data>({});
   const [loading, setLoading] = useState(true);
@@ -44,19 +50,31 @@ function AirApplication() {
     || Boolean(import.meta.env.DEV && import.meta.env.VITE_DEV_TELEGRAM_ID);
 
   const loadAccess = useCallback(async () => {
-    setLoading(true); setError("");
+    setError("");
     try { setAccess(await api<Access>("/access")); }
     catch (err) { setError(err instanceof ApiError ? err.message : "Проверь соединение с AIR"); }
     finally { setLoading(false); }
   }, []);
+  const loadInitial = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const current = await api<ConsentStatus>("/consent");
+      setConsent(current);
+      if (current.accepted) await loadAccess();
+      else setLoading(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Проверь соединение с AIR");
+      setLoading(false);
+    }
+  }, [loadAccess]);
   useEffect(() => {
     const telegram = window.Telegram?.WebApp;
     telegram?.ready();
     telegram?.expand();
     const cleanupTheme = setupTelegramTheme(telegram);
-    if (returnOrderId === null || hasTelegramAuth) queueMicrotask(() => void loadAccess());
+    if (returnOrderId === null || hasTelegramAuth) queueMicrotask(() => void loadInitial());
     return cleanupTheme;
-  }, [hasTelegramAuth, loadAccess, returnOrderId]);
+  }, [hasTelegramAuth, loadInitial, returnOrderId]);
 
   useEffect(() => {
     if (access?.status !== "active") return;
@@ -103,7 +121,8 @@ function AirApplication() {
 
   if (returnOrderId !== null && !hasTelegramAuth) return <ExternalPaymentReturn />;
   if (loading) return <Loading />;
-  if (error) return <ErrorState message={error} retry={() => { setError(""); void loadAccess(); }} />;
+  if (error) return <ErrorState message={error} retry={() => { setError(""); void loadInitial(); }} />;
+  if (consent && !consent.accepted) return <ConsentScreen onAccepted={current => { setConsent(current); setLoading(true); void loadAccess(); }} />;
   if (!access) return <ErrorState message="Открой AIR из Telegram-бота." retry={loadAccess} />;
   if (returnOrderId !== null) {
     const openAir = () => {

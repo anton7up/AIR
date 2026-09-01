@@ -37,6 +37,15 @@ from app.db.models import (
     UserResponseType,
 )
 from app.db.session import get_session
+from app.services.consent import (
+    CURRENT_PERSONAL_DATA_CONSENT_VERSION,
+    PERSONAL_DATA_CONSENT_PATH,
+    accept_personal_data_consent,
+    find_telegram_user,
+    get_or_create_telegram_user,
+    has_current_personal_data_consent,
+    require_current_personal_data_consent,
+)
 from app.services.program.content import (
     EMOTIONS,
     PROGRAM_DAYS,
@@ -154,14 +163,68 @@ async def require_active(
     return user, profile, session
 
 
-async def require_program_dev(
+async def require_active_consent(
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+) -> tuple[User, SmokingProfile, AsyncSession]:
+    user, _, _ = context
+    require_current_personal_data_consent(user)
+    return context
+
+
+async def require_program_dev(
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
     settings: Settings = Depends(get_settings),
 ) -> tuple[User, SmokingProfile, AsyncSession]:
     user, _, _ = context
     if not settings.is_program_dev(user.telegram_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Режим предпросмотра программы недоступен")
     return context
+
+
+def consent_payload(user: User | None) -> dict[str, object]:
+    if user is None or not has_current_personal_data_consent(user):
+        return {
+            "accepted": False,
+            "required_version": CURRENT_PERSONAL_DATA_CONSENT_VERSION,
+            "consent_version": None,
+            "consent_at": None,
+            "document_url": PERSONAL_DATA_CONSENT_PATH,
+        }
+    consent_at = user.personal_data_consent_at
+    if consent_at is not None and consent_at.tzinfo is None:
+        consent_at = consent_at.replace(tzinfo=timezone.utc)
+    return {
+        "accepted": True,
+        "required_version": CURRENT_PERSONAL_DATA_CONSENT_VERSION,
+        "consent_version": user.personal_data_consent_version,
+        "consent_at": consent_at,
+        "document_url": PERSONAL_DATA_CONSENT_PATH,
+    }
+
+
+@router.get("/consent")
+async def get_consent_status(
+    identity: TelegramIdentity = Depends(get_telegram_identity),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    user = await find_telegram_user(session, identity.telegram_id)
+    return consent_payload(user)
+
+
+@router.post("/consent/accept")
+async def accept_consent(
+    identity: TelegramIdentity = Depends(get_telegram_identity),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    user = await get_or_create_telegram_user(
+        session,
+        telegram_id=identity.telegram_id,
+        first_name=identity.first_name,
+        username=identity.username,
+    )
+    await accept_personal_data_consent(session, user)
+    await session.commit()
+    return consent_payload(user)
 
 
 @router.get("/access")
@@ -252,7 +315,7 @@ def achievement_payload(
 
 
 @router.get("/dashboard")
-async def dashboard(context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active)) -> dict[str, object]:
+async def dashboard(context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent)) -> dict[str, object]:
     user, profile, session = context
     active_attempt = await quit_attempt_service.current(session, user.id)
     payload = dashboard_payload(user, profile, active_attempt)
@@ -271,7 +334,7 @@ async def dashboard(context: tuple[User, SmokingProfile, AsyncSession] = Depends
 
 @router.get("/program")
 async def program(
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     user, profile, session = context
@@ -319,7 +382,7 @@ async def program(
 
 @router.post("/program/start")
 async def start_program(
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     attempt = await quit_attempt_service.start_program(session, user)
@@ -338,7 +401,7 @@ async def start_program(
 @router.get("/program/{day_number}")
 async def program_day(
     day_number: int,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     if day_number > program_engine.current_day(user):
@@ -353,7 +416,7 @@ async def program_day(
 async def save_program_day_state(
     day_number: int,
     request: ProgramStepStateRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     if day_number > program_engine.current_day(user):
@@ -371,7 +434,7 @@ async def save_program_day_state(
 
 
 @router.post("/program/{day_number}/complete")
-async def complete_program_day(day_number: int, context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active)) -> dict[str, object]:
+async def complete_program_day(day_number: int, context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent)) -> dict[str, object]:
     user, profile, session = context
     current_day = progress_calculator.program_day(user)
     if day_number < 1 or day_number > current_day or day_number > PROGRAM_LENGTH:
@@ -407,7 +470,7 @@ async def complete_program_day(day_number: int, context: tuple[User, SmokingProf
 async def save_program_day_draft(
     day_number: int,
     request: ProgramStepStateRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     if day_number > program_engine.current_day(user):
@@ -535,7 +598,7 @@ async def reset_dev_program_day(
 
 
 @router.post("/sos/sessions")
-async def record_sos_session(exercise: str, context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active)) -> dict[str, object]:
+async def record_sos_session(exercise: str, context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent)) -> dict[str, object]:
     user, _, session = context
     allowed = {"breathing", "timer", "distraction", "motivation"}
     if exercise not in allowed:
@@ -551,7 +614,7 @@ def option_payload(options: tuple) -> list[dict[str, str]]:
 
 @router.get("/support-context")
 async def support_context(
-    context: tuple[User, SmokingProfile | None, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile | None, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, smoking_profile, session = context
     profile = await support_service.program_profile(session, user.id)
@@ -744,7 +807,7 @@ def response_payload(response: UserResponse) -> dict[str, object]:
 @router.get("/responses/reasons")
 async def remembered_reasons(
     context_id: str | None = None,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     items = await user_response_memory.ranked(
@@ -762,7 +825,7 @@ async def remembered_actions(
     context_id: str | None = None,
     reason_response_id: int | None = None,
     focus: str | None = None,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     if focus not in {None, "mouth", "hands", "both"}:
@@ -782,7 +845,7 @@ async def remembered_actions(
 @router.post("/responses")
 async def remember_response(
     request: UserResponseRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     parent = None
@@ -811,7 +874,7 @@ async def remember_response(
 @router.patch("/motivation")
 async def update_motivation(
     request: MotivationRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, str]:
     user, _, session = context
     try:
@@ -833,7 +896,7 @@ async def update_motivation(
 @router.post("/nicotine-desire")
 async def create_desire_log(
     request: DesireLogRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     try:
@@ -854,7 +917,7 @@ async def create_desire_log(
 @router.get("/nicotine-desire/recent")
 async def recent_desire_logs(
     limit: int = 10,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     safe_limit = min(50, max(1, limit))
@@ -884,7 +947,7 @@ async def recent_desire_logs(
 @router.post("/sos/start")
 async def start_sos(
     request: SosStartRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     try:
@@ -902,7 +965,7 @@ async def start_sos(
 async def complete_sos(
     session_id: int,
     request: SosCompleteRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     entry = await session.scalar(
@@ -932,7 +995,7 @@ async def complete_sos(
 async def start_sos_action(
     session_id: int,
     request: SosActionRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     entry = await session.scalar(
@@ -964,7 +1027,7 @@ async def complete_sos_action(
     session_id: int,
     action_id: int,
     request: SosActionCompleteRequest | None = None,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     action = await session.scalar(
@@ -999,7 +1062,7 @@ async def record_sos_game_result(
     session_id: int,
     action_id: int,
     request: SosGameResultRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     action = await session.scalar(
@@ -1033,7 +1096,7 @@ async def record_sos_game_result(
 async def update_sos_trigger(
     session_id: int,
     request: SosTriggerUpdateRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     entry = await session.scalar(
@@ -1056,7 +1119,7 @@ async def update_sos_trigger(
 @router.post("/lapse")
 async def register_lapse(
     request: LapseRequest,
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     lapse = await support_service.register_lapse(
@@ -1077,7 +1140,7 @@ async def register_lapse(
 
 @router.get("/quit-attempt/current")
 async def current_quit_attempt(
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     attempt = await quit_attempt_service.current(session, user.id)
@@ -1101,7 +1164,7 @@ async def current_quit_attempt(
 
 @router.post("/quit-attempt/restart")
 async def restart_quit_attempt(
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
     attempt = await quit_attempt_service.restart(session, user)
@@ -1110,7 +1173,7 @@ async def restart_quit_attempt(
 
 
 @router.get("/progress")
-async def progress(context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active)) -> dict[str, object]:
+async def progress(context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent)) -> dict[str, object]:
     user, profile, session = context
     active_attempt = await quit_attempt_service.current(session, user.id)
     snapshot = progress_calculator.calculate(
@@ -1156,7 +1219,7 @@ async def progress(context: tuple[User, SmokingProfile, AsyncSession] = Depends(
 
 @router.get("/profile")
 async def profile(
-    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active),
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     user, smoking_profile, session = context

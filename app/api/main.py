@@ -45,6 +45,15 @@ async def admin_payments_page() -> FileResponse:
     return FileResponse(index_file)
 
 
+@app.get("/personal-data-consent", include_in_schema=False)
+@app.get("/personal-data-consent/", include_in_schema=False)
+async def personal_data_consent_page() -> FileResponse:
+    index_file = mini_app_dist / "index.html"
+    if not index_file.is_file():
+        raise HTTPException(status_code=404, detail="Mini App frontend is not built")
+    return FileResponse(index_file)
+
+
 if mini_app_dist.is_dir():
     app.mount("/mini-app", StaticFiles(directory=mini_app_dist, html=True), name="mini-app")
 

@@ -43,6 +43,20 @@ async def init_db() -> None:
                     await connection.execute(
                         text("ALTER TABLE users ADD COLUMN receipt_email VARCHAR(320)")
                     )
+                if "personal_data_consent_at" not in columns:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE users ADD COLUMN "
+                            "personal_data_consent_at DATETIME"
+                        )
+                    )
+                if "personal_data_consent_version" not in columns:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE users ADD COLUMN "
+                            "personal_data_consent_version VARCHAR(20)"
+                        )
+                    )
 
                 payment_columns = await connection.run_sync(
                     lambda sync_connection: {

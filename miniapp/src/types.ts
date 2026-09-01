@@ -1,5 +1,13 @@
 export type AccessLinks = { support: string | null; terms: string | null; privacy: string | null };
 
+export type ConsentStatus = {
+  accepted: boolean;
+  required_version: string;
+  consent_version: string | null;
+  consent_at: string | null;
+  document_url: string;
+};
+
 export type Access = {
   status: "free" | "active" | "expired";
   plan: string;

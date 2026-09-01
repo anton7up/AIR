@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Gender, NicotineType, SmokingProfile, User
+from app.services.consent import require_current_personal_data_consent
 from app.services.expenses import ExpenseResult
 
 
@@ -24,13 +25,8 @@ class UserRepository:
             select(User).where(User.telegram_id == telegram_id)
         )
         if user is None:
-            user = User(
-                telegram_id=telegram_id,
-                telegram_first_name=first_name,
-                username=username,
-            )
-            self.session.add(user)
-            await self.session.flush()
+            raise ValueError("Сначала необходимо согласие на обработку персональных данных")
+        require_current_personal_data_consent(user)
 
         user.telegram_first_name = first_name
         user.username = username

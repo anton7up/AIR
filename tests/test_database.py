@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,16 @@ async def test_onboarding_can_update_existing_user(tmp_path: Path) -> None:
     }
     result = ExpenseCalculator().calculate(answers)
     async with sessions() as session:
+        session.add(
+            User(
+                telegram_id=42,
+                telegram_first_name="Alex",
+                username="alex",
+                personal_data_consent_at=datetime.now(timezone.utc),
+                personal_data_consent_version="1.0",
+            )
+        )
+        await session.commit()
         repository = UserRepository(session)
         await repository.save_onboarding(42, "Alex", "alex", answers, result)
         answers["acquisition_source"] = "friends"
@@ -160,6 +171,57 @@ async def test_schema_adds_receipt_email_to_existing_users(
         )
     assert "receipt_email" in columns
     assert "payment_orders" in tables
+    await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_schema_adds_nullable_consent_without_backfill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.db.session as db_session
+
+    test_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'legacy-consent-users.db'}"
+    )
+    async with test_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "CREATE TABLE users ("
+                "id INTEGER PRIMARY KEY, telegram_id BIGINT NOT NULL, "
+                "telegram_first_name VARCHAR(255) NOT NULL)"
+            )
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO users (id, telegram_id, telegram_first_name) "
+                "VALUES (1, 749408538, 'Existing')"
+            )
+        )
+    monkeypatch.setattr(db_session, "engine", test_engine)
+
+    await db_session.init_db()
+
+    async with test_engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda sync_connection: {
+                column["name"]
+                for column in inspect(sync_connection).get_columns("users")
+            }
+        )
+        row = (
+            await connection.execute(
+                text(
+                    "SELECT personal_data_consent_at, "
+                    "personal_data_consent_version FROM users WHERE id = 1"
+                )
+            )
+        ).one()
+    assert {
+        "personal_data_consent_at",
+        "personal_data_consent_version",
+    } <= columns
+    assert row.personal_data_consent_at is None
+    assert row.personal_data_consent_version is None
     await test_engine.dispose()
 
 
