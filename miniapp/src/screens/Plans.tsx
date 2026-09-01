@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, CreditCard, ShieldCheck } from "lucide-react";
 import { ACCESS_PLANS, formatPlanPrice, type PlanId } from "../payments/plans";
-import { closeEmailKeyboardOnEnter, emitPaymentEvent, openConfirmationUrl, purchaseErrorMessage, receiptEmailError, startPurchase } from "../payments/purchase";
+import { closeEmailKeyboardOnEnter, emitPaymentEvent, purchaseErrorMessage, receiptEmailError, startPurchase, type PurchaseStartResult } from "../payments/purchase";
 import type { AccessLinks } from "../types";
+import { PaymentCheckout } from "./PaymentCheckout";
 
-export function Plans({ links, initialEmail, onBack }: { links: AccessLinks; initialEmail: string | null; onBack: () => void }) {
+export function Plans({ links, initialEmail, onBack, onPaymentSucceeded }: { links: AccessLinks; initialEmail: string | null; onBack: () => void; onPaymentSucceeded: () => void }) {
   const [notice, setNotice] = useState("");
   const [email, setEmail] = useState(initialEmail ?? "");
   const [emailError, setEmailError] = useState("");
   const [busyPlanId, setBusyPlanId] = useState<PlanId | null>(null);
+  const [pendingPayment, setPendingPayment] = useState<PurchaseStartResult | null>(null);
   const purchaseLocked = useRef(false);
   const emailInputRef = useRef<HTMLInputElement>(null);
 
@@ -28,7 +30,7 @@ export function Plans({ links, initialEmail, onBack }: { links: AccessLinks; ini
     setNotice("");
     try {
       const result = await startPurchase(planId, email);
-      openConfirmationUrl(result.confirmation_url);
+      setPendingPayment(result);
     } catch (error) {
       setNotice(purchaseErrorMessage(error));
     } finally {
@@ -42,6 +44,10 @@ export function Plans({ links, initialEmail, onBack }: { links: AccessLinks; ini
     ["Политика конфиденциальности", links.privacy],
     ["Поддержка", links.support],
   ].filter((item): item is [string, string] => Boolean(item[1]));
+
+  if (pendingPayment) {
+    return <PaymentCheckout payment={pendingPayment} onSucceeded={onPaymentSucceeded} onNewPayment={() => setPendingPayment(null)} />;
+  }
 
   return <main className="plans-screen">
     <button className="plans-back" type="button" onClick={onBack}><ArrowLeft size={19} /> Назад</button>

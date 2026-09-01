@@ -9,6 +9,22 @@ export type PurchaseStartResult = {
   confirmation_url: string;
 };
 
+export type PaymentOrderStatus = {
+  order_id: number;
+  status: "pending" | "succeeded" | "canceled";
+  access_active: boolean;
+};
+
+export type PaymentPhase = "ready" | "waiting" | "succeeded" | "canceled";
+
+export function paymentStatusPhase(status: PaymentOrderStatus): PaymentPhase {
+  if (status.status === "succeeded") return "succeeded";
+  if (status.status === "canceled") return "canceled";
+  return "waiting";
+}
+
+type ExternalLinkWebApp = { openLink?(url: string): void };
+
 type PaymentRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export function emitPaymentEvent(name: PaymentAnalyticsEvent, planId?: PlanId) {
@@ -62,9 +78,17 @@ export function purchaseErrorMessage(error: unknown) {
     : "Не удалось открыть оплату. Попробуй ещё раз.";
 }
 
-export function openConfirmationUrl(
+export function openExternalCheckout(
   url: string,
-  navigate: (target: string) => void = target => window.location.assign(target),
+  webApp: ExternalLinkWebApp | undefined = typeof window === "undefined" ? undefined : window.Telegram?.WebApp,
+  fallback: (target: string) => void = target => {
+    if (typeof window !== "undefined") window.location.assign(target);
+  },
 ) {
-  navigate(url);
+  if (webApp?.openLink) {
+    webApp.openLink(url);
+    return "telegram" as const;
+  }
+  fallback(url);
+  return "fallback" as const;
 }

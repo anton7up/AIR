@@ -50,3 +50,14 @@ export function PaymentReturn({ orderId, onOpenAir }: { orderId: number; onOpenA
     <button className="primary-button" type="button" onClick={onOpenAir}>Открыть AIR</button>
   </main>;
 }
+
+export function ExternalPaymentReturn() {
+  const returnToAir = () => window.close();
+  return <main className="payment-return-screen">
+    <CheckCircle2 size={48} />
+    <p className="eyebrow">AIR PREMIUM</p>
+    <h1>Оплата завершена</h1>
+    <p>Вернитесь в Telegram — доступ активируется автоматически.</p>
+    <button className="primary-button" type="button" onClick={returnToAir}>Вернуться в AIR</button>
+  </main>;
+}

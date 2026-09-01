@@ -5,6 +5,7 @@ interface TelegramWebApp {
   ready(): void;
   expand(): void;
   close(): void;
+  openLink?(url: string): void;
   colorScheme: "light" | "dark";
   themeParams?: import("./theme").TelegramThemeParams;
   viewportHeight?: number;

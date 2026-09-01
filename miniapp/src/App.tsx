@@ -6,7 +6,7 @@ import { NicotineDesireModal } from "./components/NicotineDesireModal";
 import { shouldShowPaywall, transitionPaywall, type PaywallView } from "./payments/flow";
 import { Home } from "./screens/Home";
 import { Paywall } from "./screens/Paywall";
-import { PaymentReturn } from "./screens/PaymentReturn";
+import { ExternalPaymentReturn, PaymentReturn } from "./screens/PaymentReturn";
 import { Plans } from "./screens/Plans";
 import { Profile } from "./screens/Profile";
 import { Program } from "./screens/Program";
@@ -32,6 +32,8 @@ export default function App() {
     const value = params.get("payment") === "return" ? Number(params.get("order_id")) : NaN;
     return Number.isInteger(value) && value > 0 ? value : null;
   });
+  const hasTelegramAuth = Boolean(window.Telegram?.WebApp.initData)
+    || Boolean(import.meta.env.DEV && import.meta.env.VITE_DEV_TELEGRAM_ID);
 
   const loadAccess = useCallback(async () => {
     setLoading(true); setError("");
@@ -44,9 +46,9 @@ export default function App() {
     telegram?.ready();
     telegram?.expand();
     const cleanupTheme = setupTelegramTheme(telegram);
-    queueMicrotask(() => void loadAccess());
+    if (returnOrderId === null || hasTelegramAuth) queueMicrotask(() => void loadAccess());
     return cleanupTheme;
-  }, [loadAccess]);
+  }, [hasTelegramAuth, loadAccess, returnOrderId]);
 
   useEffect(() => {
     if (access?.status !== "active") return;
@@ -91,6 +93,7 @@ export default function App() {
     setTab("home");
   }, [refreshAttemptData]);
 
+  if (returnOrderId !== null && !hasTelegramAuth) return <ExternalPaymentReturn />;
   if (loading) return <Loading />;
   if (error) return <ErrorState message={error} retry={() => { setError(""); void loadAccess(); }} />;
   if (!access) return <ErrorState message="Открой AIR из Telegram-бота." retry={loadAccess} />;
@@ -104,7 +107,7 @@ export default function App() {
   }
   if (shouldShowPaywall(access.status)) {
     if (paywallView === "plans" && !access.development_activation_available) {
-      return <Plans links={access.links} initialEmail={access.receipt_email} onBack={() => setPaywallView(view => transitionPaywall(view, "back"))} />;
+      return <Plans links={access.links} initialEmail={access.receipt_email} onBack={() => setPaywallView(view => transitionPaywall(view, "back"))} onPaymentSucceeded={() => void loadAccess()} />;
     }
     return <Paywall access={access} activate={activate} openPlans={() => setPaywallView(view => transitionPaywall(view, "open_plans"))} refresh={() => void refreshAccess()} busy={busy} />;
   }
