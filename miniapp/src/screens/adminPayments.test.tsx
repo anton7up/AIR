@@ -30,5 +30,7 @@ describe("payments admin entry", () => {
     expect(source).toContain('method: "PATCH"');
     expect(source).toContain("Ожидают чек");
     expect(source).toContain("Чек отправлен");
+    expect(source).toContain('setAuthState("error")');
+    expect(source).toContain("Попробовать снова");
   });
 });

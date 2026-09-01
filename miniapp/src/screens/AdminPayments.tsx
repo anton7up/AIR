@@ -44,7 +44,7 @@ const formatMoney = (value: string) => `${new Intl.NumberFormat("ru-RU").format(
 
 export function AdminPayments() {
   const [data, setData] = useState<PaymentsPayload | null>(null);
-  const [authState, setAuthState] = useState<"loading" | "login" | "denied" | "ready">("loading");
+  const [authState, setAuthState] = useState<"loading" | "login" | "denied" | "error" | "ready">("loading");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,7 +60,10 @@ export function AdminPayments() {
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) setAuthState("login");
       else if (caught instanceof ApiError && caught.status === 403) setAuthState("denied");
-      else setError(caught instanceof Error ? caught.message : "Не удалось загрузить платежи");
+      else {
+        setError(caught instanceof Error ? caught.message : "Не удалось загрузить платежи");
+        setAuthState("error");
+      }
     }
   }, []);
 
@@ -107,6 +110,7 @@ export function AdminPayments() {
 
   if (authState === "loading") return <main className="admin-login"><p>Проверяем доступ…</p></main>;
   if (authState === "denied") return <main className="admin-login"><h1>Доступ запрещён</h1><p>Этот Telegram-аккаунт не входит в список администраторов AIR.</p></main>;
+  if (authState === "error") return <main className="admin-login"><div><h1>Не удалось проверить доступ</h1><p>{error}</p><button className="primary-button" onClick={() => { setAuthState("loading"); void load(); }}>Попробовать снова</button></div></main>;
   if (authState === "login") return <main className="admin-login">
     <form onSubmit={login}>
       <ReceiptText size={40} />
