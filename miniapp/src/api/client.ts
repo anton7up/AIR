@@ -19,15 +19,28 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({ detail: "Ошибка соединения с AIR" }));
-    throw new ApiError(response.status, body.detail || "Ошибка AIR");
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
+    });
+  } catch {
+    throw new Error("Ошибка сети: не удалось связаться с AIR");
   }
-  return response.json() as Promise<T>;
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new ApiError(response.status, "AIR вернул некорректный ответ");
+  }
+  if (!response.ok) {
+    const detail = typeof body === "object" && body !== null && "detail" in body
+      ? String(body.detail)
+      : `Ошибка AIR (${response.status})`;
+    throw new ApiError(response.status, detail);
+  }
+  return body as T;
 }
 
 export function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -41,6 +54,6 @@ export function paymentApi<T>(path: string, options?: RequestInit): Promise<T> {
 export function adminApi<T>(path: string, options?: RequestInit): Promise<T> {
   return request<T>(`/api/v1/admin${path}`, {
     ...options,
-    credentials: "same-origin",
+    credentials: "include",
   });
 }

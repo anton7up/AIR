@@ -213,9 +213,12 @@ class PaymentOrder(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    receipt_status: Mapped[ReceiptStatus] = mapped_column(
-        enum_column(ReceiptStatus, "receipt_status"),
-        default=ReceiptStatus.PENDING,
+    # Keep this as a string: the additive SQLite migration stores enum values
+    # ("pending"/"sent"), while SQLAlchemy Enum stores member names by default.
+    # A string column remains compatible with already migrated production rows.
+    receipt_status: Mapped[str] = mapped_column(
+        String(20),
+        default=ReceiptStatus.PENDING.value,
         server_default=ReceiptStatus.PENDING.value,
     )
     receipt_sent_at: Mapped[datetime | None] = mapped_column(

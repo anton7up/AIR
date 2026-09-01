@@ -42,6 +42,16 @@ const formatDate = (value: string | null) => value
   : "—";
 const formatMoney = (value: string) => `${new Intl.NumberFormat("ru-RU").format(Number(value))} ₽`;
 
+const adminErrorMessage = (caught: unknown, fallback: string) => {
+  if (caught instanceof ApiError) {
+    if (caught.status === 401) return "Требуется вход в админку";
+    if (caught.status === 403) return "Доступ запрещён";
+    if (caught.status >= 500) return `Ошибка сервера AIR (${caught.status})`;
+    return caught.message;
+  }
+  return caught instanceof Error ? caught.message : fallback;
+};
+
 export function AdminPayments() {
   const [data, setData] = useState<PaymentsPayload | null>(null);
   const [authState, setAuthState] = useState<"loading" | "login" | "denied" | "error" | "ready">("loading");
@@ -54,14 +64,16 @@ export function AdminPayments() {
   const load = useCallback(async () => {
     setError("");
     try {
+      await adminApi<{ is_admin: boolean }>("/access");
       const payload = await adminApi<PaymentsPayload>("/payments");
       setData(payload);
       setAuthState("ready");
     } catch (caught) {
+      if (import.meta.env.DEV) console.error("Admin access check failed", caught);
       if (caught instanceof ApiError && caught.status === 401) setAuthState("login");
       else if (caught instanceof ApiError && caught.status === 403) setAuthState("denied");
       else {
-        setError(caught instanceof Error ? caught.message : "Не удалось загрузить платежи");
+        setError(adminErrorMessage(caught, "Не удалось загрузить платежи"));
         setAuthState("error");
       }
     }
@@ -75,9 +87,12 @@ export function AdminPayments() {
     try {
       await adminApi("/login", { method: "POST", body: JSON.stringify({ password }) });
       setPassword("");
-      window.location.reload();
+      await load();
     } catch (caught) {
-      setError(caught instanceof ApiError && caught.status === 401 ? "Неверный пароль" : "Не удалось войти");
+      if (import.meta.env.DEV) console.error("Admin login failed", caught);
+      setError(caught instanceof ApiError && caught.status === 401
+        ? "Неверный пароль"
+        : adminErrorMessage(caught, "Не удалось войти"));
     } finally { setBusy(false); }
   };
 
@@ -97,7 +112,7 @@ export function AdminPayments() {
       });
       await load();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Не удалось изменить статус чека");
+      setError(adminErrorMessage(caught, "Не удалось изменить статус чека"));
     } finally { setChangingOrder(null); }
   };
 

@@ -156,6 +156,15 @@ def _enum_value(value: object) -> str:
     return str(getattr(value, "value", value))
 
 
+def _receipt_status_value(value: object | None) -> str:
+    normalized = _enum_value(value).strip().lower() if value is not None else ""
+    return (
+        ReceiptStatus.SENT.value
+        if normalized == ReceiptStatus.SENT.value
+        else ReceiptStatus.PENDING.value
+    )
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -179,7 +188,7 @@ async def admin_payments(
     receipts_sent = 0
     for order, telegram_id in rows:
         payment_status = _enum_value(order.status)
-        receipt_status = _enum_value(order.receipt_status)
+        receipt_status = _receipt_status_value(order.receipt_status)
         if payment_status == PaymentOrderStatus.SUCCEEDED.value:
             successful_count += 1
             revenue += order.amount
@@ -232,16 +241,16 @@ async def update_receipt_status(
         )
     requested = ReceiptStatus(payload.status)
     if requested == ReceiptStatus.SENT:
-        if order.receipt_status != ReceiptStatus.SENT:
-            order.receipt_status = ReceiptStatus.SENT
+        if _receipt_status_value(order.receipt_status) != ReceiptStatus.SENT.value:
+            order.receipt_status = ReceiptStatus.SENT.value
             order.receipt_sent_at = datetime.now(timezone.utc)
     else:
-        order.receipt_status = ReceiptStatus.PENDING
+        order.receipt_status = ReceiptStatus.PENDING.value
         order.receipt_sent_at = None
     await session.commit()
     await session.refresh(order)
     return {
         "id": order.id,
-        "receipt_status": _enum_value(order.receipt_status),
+        "receipt_status": _receipt_status_value(order.receipt_status),
         "receipt_sent_at": _iso(order.receipt_sent_at),
     }

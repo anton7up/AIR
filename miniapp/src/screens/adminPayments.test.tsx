@@ -27,11 +27,18 @@ describe("payments admin entry", () => {
   it("uses protected admin endpoints and provides the required filters", () => {
     const source = readFileSync(new URL("./AdminPayments.tsx", import.meta.url), "utf8");
     expect(source).toContain('adminApi<PaymentsPayload>("/payments")');
+    expect(source).toContain('adminApi<{ is_admin: boolean }>("/access")');
     expect(source).toContain('method: "PATCH"');
     expect(source).toContain("Ожидают чек");
     expect(source).toContain("Чек отправлен");
     expect(source).toContain('setAuthState("error")');
     expect(source).toContain("Попробовать снова");
-    expect(source).toContain("window.location.reload()");
+    expect(source).toContain("await load()");
+    expect(source).not.toContain("window.location.reload()");
+  });
+
+  it("sends the HttpOnly admin cookie on every protected request", () => {
+    const source = readFileSync(new URL("../api/client.ts", import.meta.url), "utf8");
+    expect(source).toContain('credentials: "include"');
   });
 });

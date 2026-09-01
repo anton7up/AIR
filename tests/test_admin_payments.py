@@ -7,7 +7,9 @@ from http.cookies import SimpleCookie
 from urllib.parse import urlencode
 
 import pytest
-from fastapi import HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.admin import (
@@ -19,7 +21,10 @@ from app.api.admin import (
     require_admin,
     update_receipt_status,
 )
-from app.core.config import Settings
+from app.api.admin import (
+    router as admin_router,
+)
+from app.core.config import Settings, get_settings
 from app.db.base import Base
 from app.db.models import (
     PaymentOrder,
@@ -27,6 +32,7 @@ from app.db.models import (
     ReceiptStatus,
     User,
 )
+from app.db.session import get_session
 
 ADMIN_ID = 700001
 TESTER_ID = 700002
@@ -143,6 +149,66 @@ async def test_wrong_password_is_rejected_and_correct_password_sets_secure_cooki
         admin_session=session_value,
         settings=settings(),
     ) == "session"
+
+
+@pytest.mark.asyncio
+async def test_pc_login_cookie_access_and_legacy_payment_flow(tmp_path) -> None:
+    session, engine = await make_session(tmp_path)
+    async with session:
+        user, order = await make_existing_order(session)
+        telegram_id = user.telegram_id
+        # This is the exact value written by the additive production migration.
+        # receipt_sent_at intentionally remains NULL, as it is for an old order.
+        await session.execute(
+            text("UPDATE payment_orders SET receipt_status = 'pending' WHERE id = :id"),
+            {"id": order.id},
+        )
+        await session.commit()
+        session.expire_all()
+
+        test_app = FastAPI()
+        test_app.include_router(admin_router)
+        test_app.dependency_overrides[get_settings] = settings
+
+        async def override_session():
+            yield session
+
+        test_app.dependency_overrides[get_session] = override_session
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="https://testserver",
+        ) as client:
+            assert (await client.get("/api/v1/admin/access")).status_code == 401
+            assert (await client.get("/api/v1/admin/payments")).status_code == 401
+            assert (
+                await client.post(
+                    "/api/v1/admin/login", json={"password": "wrong"}
+                )
+            ).status_code == 401
+
+            login = await client.post(
+                "/api/v1/admin/login",
+                json={"password": "strong-admin-password"},
+            )
+            assert login.status_code == 200
+            assert ADMIN_COOKIE_NAME in client.cookies
+            assert "Path=/api/v1/admin" in login.headers["set-cookie"]
+            assert "Secure" in login.headers["set-cookie"]
+            assert "HttpOnly" in login.headers["set-cookie"]
+
+            access = await client.get("/api/v1/admin/access")
+            assert access.status_code == 200
+            assert access.json() == {"is_admin": True}
+
+            payments = await client.get("/api/v1/admin/payments")
+            assert payments.status_code == 200
+            payload = payments.json()
+            assert payload["orders"][0]["telegram_user_id"] == telegram_id
+            assert payload["orders"][0]["status"] == "succeeded"
+            assert payload["orders"][0]["receipt_status"] == "pending"
+            assert payload["orders"][0]["receipt_sent_at"] is None
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
