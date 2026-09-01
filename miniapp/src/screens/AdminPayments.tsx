@@ -75,7 +75,7 @@ export function AdminPayments() {
     try {
       await adminApi("/login", { method: "POST", body: JSON.stringify({ password }) });
       setPassword("");
-      await load();
+      window.location.reload();
     } catch (caught) {
       setError(caught instanceof ApiError && caught.status === 401 ? "Неверный пароль" : "Не удалось войти");
     } finally { setBusy(false); }

@@ -32,5 +32,6 @@ describe("payments admin entry", () => {
     expect(source).toContain("Чек отправлен");
     expect(source).toContain('setAuthState("error")');
     expect(source).toContain("Попробовать снова");
+    expect(source).toContain("window.location.reload()");
   });
 });
