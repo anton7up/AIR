@@ -86,6 +86,8 @@ async def test_schema_initialization_is_safe_when_started_concurrently(
         "sos_actions",
         "user_responses",
         "payment_orders",
+        "support_tickets",
+        "support_messages",
     } <= tables
     await test_engine.dispose()
 
@@ -222,6 +224,50 @@ async def test_schema_adds_nullable_consent_without_backfill(
     } <= columns
     assert row.personal_data_consent_at is None
     assert row.personal_data_consent_version is None
+    await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_schema_adds_support_tables_without_changing_existing_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.db.session as db_session
+
+    test_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'legacy-support.db'}"
+    )
+    async with test_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "CREATE TABLE users ("
+                "id INTEGER PRIMARY KEY, telegram_id BIGINT NOT NULL, "
+                "telegram_first_name VARCHAR(255) NOT NULL)"
+            )
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO users (id, telegram_id, telegram_first_name) "
+                "VALUES (1, 749408538, 'Existing')"
+            )
+        )
+    monkeypatch.setattr(db_session, "engine", test_engine)
+
+    await db_session.init_db()
+
+    async with test_engine.connect() as connection:
+        tables = await connection.run_sync(
+            lambda sync_connection: set(inspect(sync_connection).get_table_names())
+        )
+        existing_user = (
+            await connection.execute(
+                text(
+                    "SELECT id, telegram_id, telegram_first_name "
+                    "FROM users WHERE id = 1"
+                )
+            )
+        ).one()
+    assert {"support_tickets", "support_messages"} <= tables
+    assert existing_user == (1, 749408538, "Existing")
     await test_engine.dispose()
 
 

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     telegram_init_data_max_age_seconds: int = 86400
     support_url: str | None = None
+    support_admin_chat_id: str = ""
     terms_url: str | None = None
     privacy_url: str | None = None
     yookassa_shop_id: str | None = None
@@ -89,6 +90,16 @@ class Settings(BaseSettings):
 
     def is_admin(self, telegram_id: int) -> bool:
         return telegram_id in self.admin_telegram_id_set
+
+    @property
+    def support_admin_chat_id_value(self) -> int | None:
+        value = self.support_admin_chat_id.strip()
+        if not value:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
 
     model_config = SettingsConfigDict(
         env_file=".env",

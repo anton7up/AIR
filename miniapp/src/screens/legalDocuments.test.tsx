@@ -32,12 +32,12 @@ describe("AIR legal documents", () => {
     }
   });
 
-  it("links every legal document and support email from Profile", () => {
+  it("links every legal document and AIR bot support from Profile", () => {
     expect(profileSource).toContain('window.location.assign("/terms")');
     expect(profileSource).toContain('window.location.assign("/offer")');
     expect(profileSource).toContain('window.location.assign("/privacy")');
     expect(profileSource).toContain('window.location.assign("/personal-data-consent")');
-    expect(profileSource).toContain("anton.d.pravdin@gmail.com");
+    expect(profileSource).toContain("openAirSupport");
   });
 
   it("uses semantic theme tokens and mobile-safe sizing", () => {

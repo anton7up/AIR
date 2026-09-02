@@ -56,6 +56,17 @@ class ReceiptStatus(StrEnum):
     SENT = "sent"
 
 
+class SupportTicketStatus(StrEnum):
+    OPEN = "open"
+    ANSWERED = "answered"
+    CLOSED = "closed"
+
+
+class SupportSenderType(StrEnum):
+    USER = "user"
+    ADMIN = "admin"
+
+
 class QuitAttemptStatus(StrEnum):
     ACTIVE = "active"
     FINISHED = "finished"
@@ -151,6 +162,9 @@ class User(Base):
     responses: Mapped[list[UserResponse]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    support_tickets: Mapped[list[SupportTicket]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class SmokingProfile(Base):
@@ -232,6 +246,60 @@ class PaymentOrder(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="payment_orders")
+
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "active_marker", name="uq_support_ticket_active_user"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[SupportTicketStatus] = mapped_column(
+        enum_column(SupportTicketStatus, "support_ticket_status"),
+        default=SupportTicketStatus.OPEN,
+        index=True,
+    )
+    active_marker: Mapped[bool | None] = mapped_column(
+        Boolean, default=True, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped[User] = relationship(back_populates="support_tickets")
+    messages: Mapped[list[SupportMessage]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="SupportMessage.created_at",
+    )
+
+
+class SupportMessage(Base):
+    __tablename__ = "support_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(
+        ForeignKey("support_tickets.id"), index=True
+    )
+    sender_type: Mapped[SupportSenderType] = mapped_column(
+        enum_column(SupportSenderType, "support_sender_type"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    ticket: Mapped[SupportTicket] = relationship(back_populates="messages")
 
 
 class ProgramDayCompletion(Base):
