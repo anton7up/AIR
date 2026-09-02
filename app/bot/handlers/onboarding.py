@@ -1,7 +1,7 @@
 from typing import Any
 
 from aiogram import F, Router
-from aiogram.enums import ParseMode
+from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -64,8 +64,10 @@ async def show_consent(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(CommandStart())
+@router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
 async def start_onboarding(message: Message, state: FSMContext) -> None:
+    if message.chat.type != ChatType.PRIVATE:
+        return
     await state.clear()
     telegram_user = message.from_user
     if telegram_user is None:

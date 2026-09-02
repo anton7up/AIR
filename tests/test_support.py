@@ -2,6 +2,10 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from aiogram.exceptions import TelegramForbiddenError
+from aiogram.methods import AnswerCallbackQuery, SendMessage
+from aiogram.types import CallbackQuery, Chat, ForceReply, Message
+from aiogram.types import User as TelegramUser
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -37,6 +41,33 @@ class FakeBot:
         self.sent.append((chat_id, text, reply_markup))
 
 
+class FailingBot(FakeBot):
+    def __init__(self, forbidden_chat_id: int) -> None:
+        super().__init__()
+        self.forbidden_chat_id = forbidden_chat_id
+
+    async def send_message(
+        self, chat_id: int, text: str, reply_markup: object | None = None
+    ) -> None:
+        if chat_id == self.forbidden_chat_id:
+            raise TelegramForbiddenError(
+                method=SendMessage(chat_id=chat_id, text=text),
+                message="Forbidden: bot was blocked by the user",
+            )
+        await super().send_message(chat_id, text, reply_markup)
+
+
+class FakeApiBot:
+    def __init__(self) -> None:
+        self.calls: list[object] = []
+
+    async def __call__(self, method: object, **_: object) -> object:
+        self.calls.append(method)
+        if isinstance(method, AnswerCallbackQuery):
+            return True
+        return True
+
+
 class FakeState:
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self.data = data or {}
@@ -49,6 +80,12 @@ class FakeState:
     async def get_data(self) -> dict[str, object]:
         return self.data
 
+    async def set_state(self, state: object) -> None:
+        self.data["state"] = state
+
+    async def update_data(self, **data: object) -> None:
+        self.data.update(data)
+
 
 class FakeMessage:
     def __init__(
@@ -59,13 +96,17 @@ class FakeMessage:
         username: str | None = "anton",
         text: str | None = None,
         chat_id: int | None = None,
+        chat_type: str = "private",
     ) -> None:
         self.from_user = SimpleNamespace(
             id=telegram_id,
             first_name=first_name,
             username=username,
         )
-        self.chat = SimpleNamespace(id=chat_id if chat_id is not None else telegram_id)
+        self.chat = SimpleNamespace(
+            id=chat_id if chat_id is not None else telegram_id,
+            type=chat_type,
+        )
         self.text = text
         self.answers: list[tuple[str, object | None]] = []
 
@@ -90,6 +131,37 @@ def support_settings(**overrides: object) -> Settings:
     return Settings(**values)
 
 
+def admin_callback(
+    ticket_id: int,
+    *,
+    action: str = "admin_reply",
+    telegram_id: int = 749408538,
+    chat_id: int = -100123456789,
+) -> tuple[CallbackQuery, FakeApiBot]:
+    bot = FakeApiBot()
+    admin = TelegramUser(
+        id=telegram_id,
+        is_bot=False,
+        first_name="Администратор",
+    )
+    bot_user = TelegramUser(id=8618411820, is_bot=True, first_name="AIR")
+    card = Message(
+        message_id=10,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=chat_id, type="supergroup", title="AIR Support"),
+        from_user=bot_user,
+        text=f"Новое обращение AIR #{ticket_id}",
+    ).as_(bot)  # type: ignore[arg-type]
+    callback = CallbackQuery(
+        id="support-callback",
+        from_user=admin,
+        chat_instance="support-chat",
+        message=card,
+        data=f"support:{action}:{ticket_id}",
+    ).as_(bot)  # type: ignore[arg-type]
+    return callback, bot
+
+
 @pytest.mark.asyncio
 async def test_support_command_opens_flow_without_creating_ticket(
     tmp_path, monkeypatch: pytest.MonkeyPatch
@@ -102,7 +174,7 @@ async def test_support_command_opens_flow_without_creating_ticket(
     message = FakeMessage(telegram_id=1001)
     state = FakeState()
 
-    await support_handlers.open_support_flow(message, state)  # type: ignore[arg-type]
+    await support_handlers.support_command(message, state)  # type: ignore[arg-type]
 
     assert message.answers[0][0] == SUPPORT_INTRO
     assert message.answers[0][1] is not None
@@ -112,12 +184,21 @@ async def test_support_command_opens_flow_without_creating_ticket(
 
 
 @pytest.mark.asyncio
-async def test_chat_id_command_returns_current_group_id() -> None:
-    message = FakeMessage(telegram_id=1001, chat_id=-100123456789)
+@pytest.mark.parametrize("chat_type", ["group", "supergroup"])
+async def test_support_command_does_not_start_user_flow_in_groups(
+    chat_type: str,
+) -> None:
+    message = FakeMessage(
+        telegram_id=1001,
+        chat_id=-100123456789,
+        chat_type=chat_type,
+    )
+    state = FakeState()
 
-    await support_handlers.chat_id_command(message)  # type: ignore[arg-type]
+    await support_handlers.support_command(message, state)  # type: ignore[arg-type]
 
-    assert message.answers == [("Chat ID: -100123456789", None)]
+    assert message.answers == []
+    assert state.cleared is False
 
 
 @pytest.mark.asyncio
@@ -219,6 +300,198 @@ async def test_admin_reply_is_saved_and_delivered_to_correct_user(tmp_path) -> N
                 SupportMessage.ticket_id == ticket.id
             )
         ) == 2
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_full_admin_reply_flow_keeps_ticket_id_and_uses_telegram_id(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions, engine = await make_sessions(tmp_path)
+    settings = support_settings()
+    monkeypatch.setattr(support_handlers, "session_factory", sessions)
+    monkeypatch.setattr(support_handlers, "get_settings", lambda: settings)
+    recipient_telegram_id = 987654321
+    async with sessions() as session:
+        user = User(
+            telegram_id=recipient_telegram_id,
+            telegram_first_name="Получатель",
+        )
+        session.add(user)
+        await session.flush()
+        assert user.id != user.telegram_id
+        ticket = await support_ticket_service.create_ticket(session, user.id)
+        await support_ticket_service.add_message(
+            session, ticket, SupportSenderType.USER, "Вопрос"
+        )
+        await session.commit()
+        ticket_id = ticket.id
+
+    state = FakeState()
+    callback, callback_bot = admin_callback(ticket_id)
+    await support_handlers.start_admin_reply(  # type: ignore[arg-type]
+        callback, state
+    )
+
+    assert state.data["support_ticket_id"] == ticket_id
+    prompt = next(
+        call for call in callback_bot.calls if isinstance(call, SendMessage)
+    )
+    assert isinstance(prompt.reply_markup, ForceReply)
+    assert prompt.reply_markup.selective is False
+
+    admin_message = FakeMessage(
+        telegram_id=749408538,
+        chat_id=-100123456789,
+        chat_type="supergroup",
+        text="Проверенный ответ",
+    )
+    delivery_bot = FakeBot()
+    await support_handlers.receive_admin_reply(  # type: ignore[arg-type]
+        admin_message, state, delivery_bot
+    )
+
+    assert delivery_bot.sent[0][0] == recipient_telegram_id
+    assert "Проверенный ответ" in delivery_bot.sent[0][1]
+    assert state.cleared is True
+    assert admin_message.answers[-1][0] == (
+        f"Ответ по обращению #{ticket_id} отправлен."
+    )
+    async with sessions() as session:
+        ticket = await session.get(SupportTicket, ticket_id)
+        admin_reply = await session.scalar(
+            select(SupportMessage).where(
+                SupportMessage.ticket_id == ticket_id,
+                SupportMessage.sender_type == SupportSenderType.ADMIN,
+            )
+        )
+        assert ticket is not None
+        assert ticket.status == SupportTicketStatus.ANSWERED
+        assert admin_reply is not None
+        assert admin_reply.text == "Проверенный ответ"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_admin_reply_delivery_failure_is_reported_and_not_committed(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sessions, engine = await make_sessions(tmp_path)
+    settings = support_settings()
+    monkeypatch.setattr(support_handlers, "session_factory", sessions)
+    monkeypatch.setattr(support_handlers, "get_settings", lambda: settings)
+    recipient_telegram_id = 876543210
+    async with sessions() as session:
+        user = User(
+            telegram_id=recipient_telegram_id,
+            telegram_first_name="Заблокировал бота",
+        )
+        session.add(user)
+        await session.flush()
+        ticket = await support_ticket_service.create_ticket(session, user.id)
+        await support_ticket_service.add_message(
+            session, ticket, SupportSenderType.USER, "Вопрос"
+        )
+        await session.commit()
+        ticket_id = ticket.id
+
+    state = FakeState({"support_ticket_id": ticket_id})
+    admin_message = FakeMessage(
+        telegram_id=749408538,
+        chat_id=-100123456789,
+        chat_type="supergroup",
+        text="Ответ, который нельзя доставить",
+    )
+    await support_handlers.receive_admin_reply(  # type: ignore[arg-type]
+        admin_message,
+        state,
+        FailingBot(recipient_telegram_id),
+    )
+
+    assert state.cleared is False
+    assert admin_message.answers[-1][0] == "Не удалось доставить ответ пользователю."
+    assert f"ticket_id={ticket_id}" in caplog.text
+    assert f"telegram_id={recipient_telegram_id}" in caplog.text
+    assert "exception_type=TelegramForbiddenError" in caplog.text
+    async with sessions() as session:
+        ticket = await session.get(SupportTicket, ticket_id)
+        admin_messages = await session.scalar(
+            select(func.count(SupportMessage.id)).where(
+                SupportMessage.ticket_id == ticket_id,
+                SupportMessage.sender_type == SupportSenderType.ADMIN,
+            )
+        )
+        assert ticket is not None
+        assert ticket.status == SupportTicketStatus.OPEN
+        assert admin_messages == 0
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_regular_user_cannot_enter_admin_reply_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        support_handlers, "get_settings", lambda: support_settings()
+    )
+    callback, callback_bot = admin_callback(
+        1,
+        telegram_id=999999,
+        chat_id=-200987654321,
+    )
+    state = FakeState()
+
+    await support_handlers.start_admin_reply(  # type: ignore[arg-type]
+        callback, state
+    )
+
+    assert "support_ticket_id" not in state.data
+    answer = next(
+        call for call in callback_bot.calls if isinstance(call, AnswerCallbackQuery)
+    )
+    assert answer.text == "Недостаточно прав"
+    assert answer.show_alert is True
+
+
+@pytest.mark.asyncio
+async def test_admin_can_close_ticket_from_support_group(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions, engine = await make_sessions(tmp_path)
+    monkeypatch.setattr(support_handlers, "session_factory", sessions)
+    monkeypatch.setattr(
+        support_handlers, "get_settings", lambda: support_settings()
+    )
+    recipient_telegram_id = 765432109
+    async with sessions() as session:
+        user = User(
+            telegram_id=recipient_telegram_id,
+            telegram_first_name="Получатель",
+        )
+        session.add(user)
+        await session.flush()
+        ticket = await support_ticket_service.create_ticket(session, user.id)
+        await session.commit()
+        ticket_id = ticket.id
+
+    callback, callback_bot = admin_callback(ticket_id, action="admin_close")
+    state = FakeState()
+    delivery_bot = FakeBot()
+
+    await support_handlers.close_support_ticket(  # type: ignore[arg-type]
+        callback, state, delivery_bot
+    )
+
+    assert state.cleared is True
+    assert delivery_bot.sent[0][0] == recipient_telegram_id
+    assert any(isinstance(call, AnswerCallbackQuery) for call in callback_bot.calls)
+    async with sessions() as session:
+        ticket = await session.get(SupportTicket, ticket_id)
+        assert ticket is not None
+        assert ticket.status == SupportTicketStatus.CLOSED
+        assert ticket.closed_at is not None
     await engine.dispose()
 
 

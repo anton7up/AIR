@@ -36,14 +36,6 @@ router = Router(name="support")
 logger = logging.getLogger(__name__)
 
 
-@router.message(
-    Command("chatid"),
-    F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}),
-)
-async def chat_id_command(message: Message) -> None:
-    await message.answer(f"Chat ID: {message.chat.id}")
-
-
 def callback_ticket_id(data: str | None, prefix: str) -> int | None:
     if not data or not data.startswith(prefix):
         return None
@@ -90,13 +82,20 @@ async def open_support_flow(message: Message, state: FSMContext) -> None:
     await message.answer(SUPPORT_INTRO, reply_markup=support_intro_keyboard())
 
 
-@router.message(Command("support"))
+@router.message(Command("support"), F.chat.type == ChatType.PRIVATE)
 async def support_command(message: Message, state: FSMContext) -> None:
+    if message.chat.type != ChatType.PRIVATE:
+        return
     await open_support_flow(message, state)
 
 
-@router.message(F.text.regexp(r"^/start(?:@\w+)?\s+support$"))
+@router.message(
+    F.text.regexp(r"^/start(?:@\w+)?\s+support$"),
+    F.chat.type == ChatType.PRIVATE,
+)
 async def support_deep_link(message: Message, state: FSMContext) -> None:
+    if message.chat.type != ChatType.PRIVATE:
+        return
     await open_support_flow(message, state)
 
 
@@ -226,7 +225,11 @@ async def start_admin_reply(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.answer(
         f"Напиши ответ для обращения #{ticket_id}.",
         reply_markup=ForceReply(
-            selective=True, input_field_placeholder="Ответ пользователю"
+            # The prompt does not mention a specific user and is not a reply to
+            # an admin message, so selective=True has no Telegram target. A
+            # non-selective ForceReply keeps replies visible to privacy-mode bots.
+            selective=False,
+            input_field_placeholder="Ответ пользователю",
         ),
     )
 
@@ -251,6 +254,7 @@ async def receive_admin_reply(message: Message, state: FSMContext, bot: Bot) -> 
         await message.answer("Обращение не найдено")
         await state.clear()
         return
+    recipient_telegram_id: int | None = None
     try:
         async with session_factory() as session:
             ticket = await support_ticket_service.get_active_ticket(session, ticket_id)
@@ -259,6 +263,7 @@ async def receive_admin_reply(message: Message, state: FSMContext, bot: Bot) -> 
                 await message.answer("Обращение уже закрыто или не найдено")
                 await state.clear()
                 return
+            recipient_telegram_id = user.telegram_id
             await support_ticket_service.add_message(
                 session,
                 ticket,
@@ -269,8 +274,14 @@ async def receive_admin_reply(message: Message, state: FSMContext, bot: Bot) -> 
                 bot, user, ticket, message.text.strip()
             )
             await session.commit()
-    except TelegramAPIError:
-        logger.exception("Unable to deliver AIR support reply to user")
+    except TelegramAPIError as exc:
+        logger.exception(
+            "Unable to deliver AIR support reply: "
+            "ticket_id=%s telegram_id=%s exception_type=%s",
+            ticket_id,
+            recipient_telegram_id,
+            type(exc).__name__,
+        )
         await message.answer("Не удалось доставить ответ пользователю.")
         return
     await state.clear()

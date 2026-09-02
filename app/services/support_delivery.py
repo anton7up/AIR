@@ -76,7 +76,7 @@ async def send_admin_reply_to_user(
     bot: Bot, user: User, ticket: SupportTicket, text: str
 ) -> None:
     await bot.send_message(
-        user.telegram_id,
-        f"Ответ поддержки AIR\n\n{text}",
+        chat_id=user.telegram_id,
+        text=f"Ответ поддержки AIR\n\n{text}",
         reply_markup=user_reply_keyboard(ticket.id),
     )
