@@ -14,17 +14,20 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 8000
       DATABASE_URL: sqlite+aiosqlite:////data/air.db
+      TRUSTED_PROXY_CIDRS: 172.30.0.0/24
     volumes:
       - ./data:/data
       - ./backups:/backups
     expose:
       - "8000"
+    networks:
+      - air_internal
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()"
+        - "import urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host':'airtgbot.ru'}); urllib.request.urlopen(r, timeout=5).read()"
       interval: 30s
       timeout: 10s
       retries: 3
@@ -48,6 +51,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    networks:
+      - air_internal
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -63,3 +68,9 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  air_internal:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

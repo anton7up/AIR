@@ -286,6 +286,13 @@ class SupportTicket(Base):
 
 class SupportMessage(Base):
     __tablename__ = "support_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "telegram_chat_id",
+            "telegram_message_id",
+            name="uq_support_message_telegram_source",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ticket_id: Mapped[int] = mapped_column(
@@ -295,6 +302,12 @@ class SupportMessage(Base):
         enum_column(SupportSenderType, "support_sender_type"), index=True
     )
     text: Mapped[str] = mapped_column(Text)
+    telegram_chat_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    telegram_message_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -376,6 +389,9 @@ class UserResponse(Base):
     __tablename__ = "user_responses"
     __table_args__ = (
         CheckConstraint("usage_count >= 1", name="ck_user_response_usage_positive"),
+        UniqueConstraint(
+            "user_id", "dedup_key", name="uq_user_response_user_dedup_key"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -385,6 +401,7 @@ class UserResponse(Base):
     )
     value: Mapped[str] = mapped_column(String(1000))
     normalized_value: Mapped[str] = mapped_column(String(1000), index=True)
+    dedup_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     context_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     parent_response_id: Mapped[int | None] = mapped_column(
         ForeignKey("user_responses.id"), nullable=True, index=True
@@ -407,6 +424,29 @@ class UserResponse(Base):
 
     user: Mapped[User] = relationship(back_populates="responses")
     parent: Mapped[UserResponse | None] = relationship(remote_side="UserResponse.id")
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "operation_type",
+            "idempotency_key",
+            name="uq_idempotency_user_operation_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    operation_type: Mapped[str] = mapped_column(String(80))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    response_json: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class QuitAttempt(Base):

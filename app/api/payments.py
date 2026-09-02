@@ -6,13 +6,14 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import TelegramIdentity, get_telegram_identity
+from app.api.auth import TelegramIdentity, get_rate_limited_telegram_identity
 from app.api.mini_app import access_status, load_user
 from app.core.config import Settings, get_settings
+from app.core.security import payment_call_limiter
 from app.db.models import PaymentOrder, PaymentOrderStatus
 from app.db.session import get_session
 from app.services.payments import (
@@ -28,13 +29,13 @@ router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
 
 
 class CreatePaymentRequest(BaseModel):
-    plan_id: str
+    plan_id: str = Field(min_length=1, max_length=50)
     email: EmailStr
 
 
 class YooKassaWebhook(BaseModel):
-    type: str | None = None
-    event: str | None = None
+    type: str | None = Field(default=None, max_length=100)
+    event: str | None = Field(default=None, max_length=100)
     object: dict[str, Any]
 
 
@@ -57,7 +58,7 @@ def get_yookassa_gateway(
 @router.post("/create")
 async def create_payment(
     payload: CreatePaymentRequest,
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     gateway: YooKassaGateway = Depends(get_yookassa_gateway),
@@ -98,18 +99,19 @@ async def create_payment(
         }
 
     try:
-        payment = await gateway.create_payment(
-            amount=order.amount,
-            currency=order.currency,
-            description=plan.title,
-            return_url=payment_return_url(settings.yookassa_return_url, order.id),
-            metadata={
-                "air_order_id": str(order.id),
-                "air_user_id": str(user.id),
-                "plan_id": plan.id,
-            },
-            idempotency_key=order.idempotency_key,
-        )
+        async with payment_call_limiter.slot():
+            payment = await gateway.create_payment(
+                amount=order.amount,
+                currency=order.currency,
+                description=plan.title,
+                return_url=payment_return_url(settings.yookassa_return_url, order.id),
+                metadata={
+                    "air_order_id": str(order.id),
+                    "air_user_id": str(user.id),
+                    "plan_id": plan.id,
+                },
+                idempotency_key=order.idempotency_key,
+            )
     except Exception as exc:
         logger.exception("YooKassa payment creation failed for order %s", order.id)
         raise HTTPException(
@@ -130,7 +132,7 @@ async def create_payment(
 @router.get("/{order_id}/status")
 async def payment_status(
     order_id: int,
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
     gateway: YooKassaGateway = Depends(get_yookassa_gateway),
@@ -146,12 +148,36 @@ async def payment_status(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Платёж не найден")
 
     if order.status == PaymentOrderStatus.PENDING and order.yookassa_payment_id:
-        try:
-            verified = await gateway.get_payment(order.yookassa_payment_id)
-        except Exception:
-            logger.exception("YooKassa status refresh failed for order %s", order.id)
-        else:
-            await apply_verified_payment(session, order=order, payment=verified)
+        current_order_id = order.id
+        await session.commit()
+        async with payment_call_limiter.slot(current_order_id):
+            order = await session.scalar(
+                select(PaymentOrder)
+                .where(PaymentOrder.id == current_order_id)
+                .execution_options(populate_existing=True)
+            )
+            assert order is not None
+            if order.status == PaymentOrderStatus.PENDING and order.yookassa_payment_id:
+                payment_id = order.yookassa_payment_id
+                await session.commit()
+                try:
+                    verified = await gateway.get_payment(payment_id)
+                except Exception:
+                    logger.exception(
+                        "YooKassa status refresh failed for order %s", current_order_id
+                    )
+                else:
+                    await apply_verified_payment(
+                        session,
+                        order_id=current_order_id,
+                        payment=verified,
+                    )
+        order = await session.scalar(
+            select(PaymentOrder)
+            .where(PaymentOrder.id == order_id)
+            .execution_options(populate_existing=True)
+        )
+        assert order is not None
     access, _ = await access_status(session, user, settings)
     return {
         "order_id": order.id,
@@ -173,9 +199,7 @@ async def yookassa_webhook(
         return {"status": "ignored"}
 
     order = await session.scalar(
-        select(PaymentOrder)
-        .where(PaymentOrder.yookassa_payment_id == payment_id)
-        .with_for_update()
+        select(PaymentOrder).where(PaymentOrder.yookassa_payment_id == payment_id)
     )
     if order is None:
         logger.warning("Ignoring YooKassa webhook for unknown payment %s", payment_id)
@@ -183,16 +207,32 @@ async def yookassa_webhook(
     if order.status == PaymentOrderStatus.SUCCEEDED:
         return {"status": "already_processed"}
 
-    try:
-        verified = await gateway.get_payment(payment_id)
-    except Exception as exc:
-        logger.exception("Could not verify YooKassa webhook for order %s", order.id)
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Не удалось проверить платёж",
-        ) from exc
-    result = await apply_verified_payment(session, order=order, payment=verified)
+    order_id = order.id
+    await session.commit()
+    async with payment_call_limiter.slot(order_id):
+        order = await session.scalar(
+            select(PaymentOrder)
+            .where(PaymentOrder.id == order_id)
+            .execution_options(populate_existing=True)
+        )
+        assert order is not None
+        if order.status == PaymentOrderStatus.SUCCEEDED:
+            return {"status": "already_processed"}
+        await session.commit()
+        try:
+            verified = await gateway.get_payment(payment_id)
+        except Exception as exc:
+            logger.exception("Could not verify YooKassa webhook for order %s", order_id)
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Не удалось проверить платёж",
+            ) from exc
+        result = await apply_verified_payment(
+            session,
+            order_id=order_id,
+            payment=verified,
+        )
     if result == "invalid":
-        logger.error("Rejected inconsistent YooKassa payment for order %s", order.id)
+        logger.error("Rejected inconsistent YooKassa payment for order %s", order_id)
         return {"status": "ignored"}
     return {"status": result}

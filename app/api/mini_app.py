@@ -1,11 +1,13 @@
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import TelegramIdentity, get_telegram_identity
+from app.api.auth import TelegramIdentity, get_rate_limited_telegram_identity
 from app.api.schemas import (
     DesireLogRequest,
     LapseRequest,
@@ -46,6 +48,7 @@ from app.services.consent import (
     has_current_personal_data_consent,
     require_current_personal_data_consent,
 )
+from app.services.idempotency import IdempotencyConflictError, execute_idempotent
 from app.services.program.content import (
     EMOTIONS,
     PROGRAM_DAYS,
@@ -63,6 +66,37 @@ from app.services.user_responses import ACTION_TYPES, user_response_memory
 
 router = APIRouter(prefix="/api/v1/mini-app", tags=["mini-app"])
 progress_calculator = ProgressCalculator()
+IdempotencyKey = Annotated[
+    str,
+    Header(
+        alias="Idempotency-Key",
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+]
+
+
+async def idempotent_event(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    operation_type: str,
+    idempotency_key: str,
+    payload: object,
+    operation: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    try:
+        return await execute_idempotent(
+            session,
+            user_id=user_id,
+            operation_type=operation_type,
+            idempotency_key=idempotency_key,
+            payload=payload,
+            operation=operation,
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 async def load_user(session: AsyncSession, telegram_id: int) -> tuple[User, SmokingProfile]:
@@ -152,7 +186,7 @@ async def access_payload(
 
 
 async def require_active(
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> tuple[User, SmokingProfile, AsyncSession]:
@@ -204,7 +238,7 @@ def consent_payload(user: User | None) -> dict[str, object]:
 
 @router.get("/consent")
 async def get_consent_status(
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
     user = await find_telegram_user(session, identity.telegram_id)
@@ -213,7 +247,7 @@ async def get_consent_status(
 
 @router.post("/consent/accept")
 async def accept_consent(
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
     user = await get_or_create_telegram_user(
@@ -229,7 +263,7 @@ async def accept_consent(
 
 @router.get("/access")
 async def get_access(
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
@@ -240,7 +274,7 @@ async def get_access(
 
 @router.post("/access/refresh")
 async def refresh_access(
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
@@ -250,7 +284,7 @@ async def refresh_access(
 
 @router.post("/dev/activate")
 async def activate_development_access(
-    identity: TelegramIdentity = Depends(get_telegram_identity),
+    identity: TelegramIdentity = Depends(get_rate_limited_telegram_identity),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
@@ -598,14 +632,29 @@ async def reset_dev_program_day(
 
 
 @router.post("/sos/sessions")
-async def record_sos_session(exercise: str, context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent)) -> dict[str, object]:
+async def record_sos_session(
+    exercise: str,
+    idempotency_key: IdempotencyKey,
+    context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
+) -> dict[str, object]:
     user, _, session = context
     allowed = {"breathing", "timer", "distraction", "motivation"}
     if exercise not in allowed:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Этот инструмент SOS недоступен")
-    session.add(SosSession(user_id=user.id, exercise_type=exercise))
-    await session.commit()
-    return {"recorded": True, "exercise": exercise}
+
+    async def operation() -> dict[str, object]:
+        session.add(SosSession(user_id=user.id, exercise_type=exercise))
+        await session.flush()
+        return {"recorded": True, "exercise": exercise}
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="sos_legacy_session",
+        idempotency_key=idempotency_key,
+        payload={"exercise": exercise},
+        operation=operation,
+    )
 
 
 def option_payload(options: tuple) -> list[dict[str, str]]:
@@ -896,22 +945,33 @@ async def update_motivation(
 @router.post("/nicotine-desire")
 async def create_desire_log(
     request: DesireLogRequest,
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    try:
-        entry = await support_service.log_desire(
-            session,
-            user,
-            request.intensity,
-            request.trigger_id,
-            request.emotion,
-            request.note,
-        )
-        await session.commit()
-    except SupportValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return {"id": entry.id, "created_at": entry.created_at, "recorded": True}
+
+    async def operation() -> dict[str, object]:
+        try:
+            entry = await support_service.log_desire(
+                session,
+                user,
+                request.intensity,
+                request.trigger_id,
+                request.emotion,
+                request.note,
+            )
+        except SupportValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        return {"id": entry.id, "created_at": entry.created_at, "recorded": True}
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="nicotine_desire",
+        idempotency_key=idempotency_key,
+        payload=request.model_dump(mode="json"),
+        operation=operation,
+    )
 
 
 @router.get("/nicotine-desire/recent")
@@ -947,114 +1007,159 @@ async def recent_desire_logs(
 @router.post("/sos/start")
 async def start_sos(
     request: SosStartRequest,
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    try:
-        entry = await support_service.start_sos(
-            session, user, request.intensity_before, request.trigger_id,
-            request.reason_response_id,
-        )
-        await session.commit()
-    except SupportValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return {"id": entry.id, "started_at": entry.started_at}
+
+    async def operation() -> dict[str, object]:
+        try:
+            entry = await support_service.start_sos(
+                session, user, request.intensity_before, request.trigger_id,
+                request.reason_response_id,
+            )
+        except SupportValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        return {"id": entry.id, "started_at": entry.started_at}
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="sos_start",
+        idempotency_key=idempotency_key,
+        payload=request.model_dump(mode="json"),
+        operation=operation,
+    )
 
 
 @router.post("/sos/{session_id}/complete")
 async def complete_sos(
     session_id: int,
     request: SosCompleteRequest,
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    entry = await session.scalar(
-        select(SosSession).where(
-            SosSession.id == session_id, SosSession.user_id == user.id
+
+    async def operation() -> dict[str, object]:
+        entry = await session.scalar(
+            select(SosSession).where(
+                SosSession.id == session_id, SosSession.user_id == user.id
+            )
         )
+        if entry is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Сессия SOS не найдена")
+        try:
+            await support_service.finish_sos(
+                session, entry, request.intensity_after, request.nicotine_used_after
+            )
+        except SupportValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        return {
+            "id": entry.id,
+            "intensity_before": entry.intensity_before,
+            "intensity_after": entry.intensity_after,
+            "still_strong": bool(entry.intensity_after and entry.intensity_after >= 8),
+            "completed": True,
+        }
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="sos_complete",
+        idempotency_key=idempotency_key,
+        payload={"session_id": session_id, **request.model_dump(mode="json")},
+        operation=operation,
     )
-    if entry is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сессия SOS не найдена")
-    try:
-        await support_service.finish_sos(
-            session, entry, request.intensity_after, request.nicotine_used_after
-        )
-        await session.commit()
-    except SupportValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return {
-        "id": entry.id,
-        "intensity_before": entry.intensity_before,
-        "intensity_after": entry.intensity_after,
-        "still_strong": bool(entry.intensity_after and entry.intensity_after >= 8),
-        "completed": True,
-    }
 
 
 @router.post("/sos/{session_id}/actions")
 async def start_sos_action(
     session_id: int,
     request: SosActionRequest,
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    entry = await session.scalar(
-        select(SosSession).where(
-            SosSession.id == session_id, SosSession.user_id == user.id
+
+    async def operation() -> dict[str, object]:
+        entry = await session.scalar(
+            select(SosSession).where(
+                SosSession.id == session_id, SosSession.user_id == user.id
+            )
         )
+        if entry is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Сессия SOS не найдена")
+        try:
+            action = await support_service.start_sos_action(
+                session, entry, request.support_type, request.support_action,
+                request.user_response_id,
+            )
+        except SupportValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        return {
+            "id": action.id,
+            "sequence_number": action.sequence_number,
+            "support_type": action.support_type,
+            "intensity_before": action.intensity_before,
+            "started_at": action.started_at,
+        }
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="sos_action_start",
+        idempotency_key=idempotency_key,
+        payload={"session_id": session_id, **request.model_dump(mode="json")},
+        operation=operation,
     )
-    if entry is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сессия SOS не найдена")
-    try:
-        action = await support_service.start_sos_action(
-            session, entry, request.support_type, request.support_action,
-            request.user_response_id,
-        )
-        await session.commit()
-    except SupportValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return {
-        "id": action.id,
-        "sequence_number": action.sequence_number,
-        "support_type": action.support_type,
-        "intensity_before": action.intensity_before,
-        "started_at": action.started_at,
-    }
 
 
 @router.post("/sos/{session_id}/actions/{action_id}/complete")
 async def complete_sos_action(
     session_id: int,
     action_id: int,
+    idempotency_key: IdempotencyKey,
     request: SosActionCompleteRequest | None = None,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    action = await session.scalar(
-        select(SosAction)
-        .join(SosSession, SosSession.id == SosAction.sos_session_id)
-        .where(
-            SosAction.id == action_id,
-            SosAction.sos_session_id == session_id,
-            SosSession.user_id == user.id,
+
+    async def operation() -> dict[str, object]:
+        action = await session.scalar(
+            select(SosAction)
+            .join(SosSession, SosSession.id == SosAction.sos_session_id)
+            .where(
+                SosAction.id == action_id,
+                SosAction.sos_session_id == session_id,
+                SosSession.user_id == user.id,
+            )
         )
-    )
-    if action is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Действие SOS не найдено")
-    await support_service.complete_sos_action(
+        if action is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Действие SOS не найдено")
+        await support_service.complete_sos_action(
+            session,
+            action,
+            request.intensity_after if request else None,
+            request.metadata if request else None,
+        )
+        return {
+            "id": action.id,
+            "completed_at": action.completed_at,
+            "intensity_before": action.intensity_before,
+            "intensity_after": action.intensity_after,
+            "effect_delta": action.effect_delta,
+        }
+
+    body = request.model_dump(mode="json") if request else {}
+    return await idempotent_event(
         session,
-        action,
-        request.intensity_after if request else None,
-        request.metadata if request else None,
+        user_id=user.id,
+        operation_type="sos_action_complete",
+        idempotency_key=idempotency_key,
+        payload={"session_id": session_id, "action_id": action_id, **body},
+        operation=operation,
     )
-    await session.commit()
-    return {
-        "id": action.id,
-        "completed_at": action.completed_at,
-        "intensity_before": action.intensity_before,
-        "intensity_after": action.intensity_after,
-        "effect_delta": action.effect_delta,
-    }
 
 
 @router.post("/sos/{session_id}/actions/{action_id}/game-result")
@@ -1062,80 +1167,117 @@ async def record_sos_game_result(
     session_id: int,
     action_id: int,
     request: SosGameResultRequest,
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    action = await session.scalar(
-        select(SosAction)
-        .join(SosSession, SosSession.id == SosAction.sos_session_id)
-        .where(
-            SosAction.id == action_id,
-            SosAction.sos_session_id == session_id,
-            SosSession.user_id == user.id,
+
+    async def operation() -> dict[str, object]:
+        action = await session.scalar(
+            select(SosAction)
+            .join(SosSession, SosSession.id == SosAction.sos_session_id)
+            .where(
+                SosAction.id == action_id,
+                SosAction.sos_session_id == session_id,
+                SosSession.user_id == user.id,
+            )
         )
+        if action is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Действие SOS не найдено")
+        try:
+            metadata, new_record = await support_service.record_air_cloud_result(
+                session,
+                action,
+                user.id,
+                request.height,
+                request.jumps,
+                request.duration_seconds,
+                request.boosts_used,
+            )
+        except SupportValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        return {"metadata": metadata, "new_record": new_record}
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="sos_game_result",
+        idempotency_key=idempotency_key,
+        payload={
+            "session_id": session_id,
+            "action_id": action_id,
+            **request.model_dump(mode="json"),
+        },
+        operation=operation,
     )
-    if action is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Действие SOS не найдено")
-    try:
-        metadata, new_record = await support_service.record_air_cloud_result(
-            session,
-            action,
-            user.id,
-            request.height,
-            request.jumps,
-            request.duration_seconds,
-            request.boosts_used,
-        )
-        await session.commit()
-    except SupportValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return {"metadata": metadata, "new_record": new_record}
 
 
 @router.patch("/sos/{session_id}/trigger")
 async def update_sos_trigger(
     session_id: int,
     request: SosTriggerUpdateRequest,
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    entry = await session.scalar(
-        select(SosSession).where(
-            SosSession.id == session_id, SosSession.user_id == user.id
+
+    async def operation() -> dict[str, object]:
+        entry = await session.scalar(
+            select(SosSession).where(
+                SosSession.id == session_id, SosSession.user_id == user.id
+            )
         )
+        if entry is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Сессия SOS не найдена")
+        try:
+            await support_service.update_sos_trigger(
+                session, entry, request.trigger_id, request.action_id
+            )
+        except SupportValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        return {"id": entry.id, "trigger_id": entry.trigger_id}
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="sos_trigger_update",
+        idempotency_key=idempotency_key,
+        payload={"session_id": session_id, **request.model_dump(mode="json")},
+        operation=operation,
     )
-    if entry is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сессия SOS не найдена")
-    try:
-        await support_service.update_sos_trigger(
-            session, entry, request.trigger_id, request.action_id
-        )
-        await session.commit()
-    except SupportValidationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return {"id": entry.id, "trigger_id": entry.trigger_id}
 
 
 @router.post("/lapse")
 async def register_lapse(
     request: LapseRequest,
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    lapse = await support_service.register_lapse(
+
+    async def operation() -> dict[str, object]:
+        lapse = await support_service.register_lapse(
+            session,
+            user,
+            LapseType(request.lapse_type),
+            request.trigger_id,
+            request.note,
+        )
+        return {
+            "id": lapse.id,
+            "occurred_at": lapse.occurred_at,
+            "message": "Это событие не отменяет твой прогресс в программе.",
+            "can_restart": True,
+        }
+
+    return await idempotent_event(
         session,
-        user,
-        LapseType(request.lapse_type),
-        request.trigger_id,
-        request.note,
+        user_id=user.id,
+        operation_type="nicotine_lapse",
+        idempotency_key=idempotency_key,
+        payload=request.model_dump(mode="json"),
+        operation=operation,
     )
-    await session.commit()
-    return {
-        "id": lapse.id,
-        "occurred_at": lapse.occurred_at,
-        "message": "Это событие не отменяет твой прогресс в программе.",
-        "can_restart": True,
-    }
 
 
 @router.get("/quit-attempt/current")
@@ -1164,12 +1306,23 @@ async def current_quit_attempt(
 
 @router.post("/quit-attempt/restart")
 async def restart_quit_attempt(
+    idempotency_key: IdempotencyKey,
     context: tuple[User, SmokingProfile, AsyncSession] = Depends(require_active_consent),
 ) -> dict[str, object]:
     user, _, session = context
-    attempt = await quit_attempt_service.restart(session, user)
-    await session.commit()
-    return {"id": attempt.id, "started_at": attempt.started_at, "status": "active"}
+
+    async def operation() -> dict[str, object]:
+        attempt = await quit_attempt_service.restart(session, user)
+        return {"id": attempt.id, "started_at": attempt.started_at, "status": "active"}
+
+    return await idempotent_event(
+        session,
+        user_id=user.id,
+        operation_type="quit_attempt_restart",
+        idempotency_key=idempotency_key,
+        payload={},
+        operation=operation,
+    )
 
 
 @router.get("/progress")

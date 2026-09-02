@@ -1,7 +1,7 @@
 import { Brain, Check, Footprints, Gamepad2, Hand, LifeBuoy, RotateCcw, ShieldCheck, Wind } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { api } from "../api/client";
+import { api, eventApi } from "../api/client";
 import { Options, Scale } from "../components/NicotineDesireModal";
 import { AirCloudGame } from "../sos/AirCloudGame";
 import type { CloudGameMetadata } from "../sos/cloudGame";
@@ -98,13 +98,13 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
   const start = async (selectedTrigger = trigger, selectedReason = reasonResponse) => {
     if (!before || !selectedTrigger) return;
     setBusy(true);
-    const result = await api<{ id: number }>("/sos/start", { method: "POST", body: JSON.stringify({ intensity_before: before, trigger_id: selectedTrigger, reason_response_id: selectedReason?.id ?? null }) });
+    const result = await eventApi<{ id: number }>("/sos/start", { method: "POST", body: JSON.stringify({ intensity_before: before, trigger_id: selectedTrigger, reason_response_id: selectedReason?.id ?? null }) });
     setSessionId(result.id); setStep("support"); setBusy(false);
   };
   const beginExercise = async (id: SupportType, selectedAction: string | null, userResponseId: number | null = null) => {
     if (!sessionId) return;
     setBusy(true);
-    const result = await api<{ id: number; intensity_before: number }>(`/sos/${sessionId}/actions`, { method: "POST", body: JSON.stringify({ support_type: id, support_action: selectedAction, user_response_id: userResponseId }) });
+    const result = await eventApi<{ id: number; intensity_before: number }>(`/sos/${sessionId}/actions`, { method: "POST", body: JSON.stringify({ support_type: id, support_action: selectedAction, user_response_id: userResponseId }) });
     setSupport(id); setActionId(result.id); setCurrentBefore(result.intensity_before); setAfter(null); setToolMetadata(null); setStep("exercise"); setBusy(false);
   };
   const loadReasons = async () => {
@@ -146,7 +146,7 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
   const finishAction = async () => {
     if (!sessionId || !actionId || !support || !after) return;
     setBusy(true);
-    await api(`/sos/${sessionId}/actions/${actionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, metadata: toolMetadata }) });
+    await eventApi(`/sos/${sessionId}/actions/${actionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, metadata: toolMetadata }) });
     setUsed(items => ({ ...items, [support]: (items[support] || 0) + 1 })); setStep(actionCompletionStep()); setBusy(false);
   };
   const saveMotivation = async () => {
@@ -161,17 +161,17 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
   const finishSession = async () => {
     if (!sessionId || !after || !before) return;
     setBusy(true);
-    const result = await api<{ intensity_before: number; intensity_after: number }>(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, nicotine_used_after: false }) });
+    const result = await eventApi<{ intensity_before: number; intensity_after: number }>(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, nicotine_used_after: false }) });
     setFinalSummary({ before: result.intensity_before, after: result.intensity_after }); setStep("done"); setBusy(false);
   };
   const saveLapse = async () => {
     if (!lapseType) return;
     setBusy(true);
-    if (sessionId && (after || before)) await api(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after || before, nicotine_used_after: true }) });
-    await api("/lapse", { method: "POST", body: JSON.stringify({ lapse_type: lapseType, trigger_id: trigger }) });
+    if (sessionId && (after || before)) await eventApi(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after || before, nicotine_used_after: true }) });
+    await eventApi("/lapse", { method: "POST", body: JSON.stringify({ lapse_type: lapseType, trigger_id: trigger }) });
     await onAttemptChanged(); setStep("lapse_done"); setBusy(false);
   };
-  const restart = async () => { setBusy(true); await api("/quit-attempt/restart", { method: "POST" }); reset(); await onAttemptRestarted(); };
+  const restart = async () => { setBusy(true); await eventApi("/quit-attempt/restart", { method: "POST" }); reset(); await onAttemptRestarted(); };
   const reset = () => { setStep("intro"); setBefore(null); setCurrentBefore(null); setAfter(null); setTrigger(null); setReasonResponse(null); setRememberedReasons([]); setCustomReason(""); setSupport(null); setSessionId(null); setActionId(null); setUsed({}); setPersonalActions([]); setCustomAction(""); setToolMetadata(null); setLapseType(null); setFinalSummary(null); setBusy(false); };
 
   const gameActive = step === "exercise" && support === "distraction";
@@ -202,7 +202,7 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
 
 function ToolExercise({ support, context, trigger, proposal, sessionId, actionId, onComplete }: { support: SupportType; context: SupportContext | null; trigger: string | null; proposal?: string; sessionId: number; actionId: number; onComplete: (metadata: Record<string, unknown>) => void }) {
   if (support === "breathing") return <Flow title="Квадратное дыхание" body="Следуй за маркером по сторонам квадрата."><SquareBreathing onComplete={onComplete} /></Flow>;
-  if (support === "distraction") return <Flow title="Выше облаков" body="Помоги облачку AIR подниматься всё выше. Нажимай на левую или правую половину поля."><AirCloudGame initialBestHeight={context?.game_best_height || 0} onRecord={metadata => api<{ metadata: CloudGameMetadata; new_record: boolean }>(`/sos/${sessionId}/actions/${actionId}/game-result`, { method: "POST", body: JSON.stringify({ height: metadata.height, jumps: metadata.jumps, duration_seconds: metadata.duration_seconds, boosts_used: metadata.boosts_used }) })} onComplete={onComplete} /></Flow>;
+  if (support === "distraction") return <Flow title="Выше облаков" body="Помоги облачку AIR подниматься всё выше. Нажимай на левую или правую половину поля."><AirCloudGame initialBestHeight={context?.game_best_height || 0} onRecord={metadata => eventApi<{ metadata: CloudGameMetadata; new_record: boolean }>(`/sos/${sessionId}/actions/${actionId}/game-result`, { method: "POST", body: JSON.stringify({ height: metadata.height, jumps: metadata.jumps, duration_seconds: metadata.duration_seconds, boosts_used: metadata.boosts_used }) })} onComplete={onComplete} /></Flow>;
   if (support === "motivation") return <Flow title="Твоя причина всё ещё с тобой" body="Вернись к тому, ради чего ты начал."><MotivationCard context={context} /><button className="primary-button" onClick={() => onComplete({ viewed: true })}>Оценить желание сейчас</button></Flow>;
   if (support === "personal_plan") return <PersonalPlanExercise context={context} trigger={trigger} onComplete={onComplete} />;
   if (support === "ai_support") return <Flow title="Поговорить с AIR" body="Персональная поддержка AIR появится здесь. Будущий помощник сможет учитывать твою историю и ситуации."><p className="sos-mantra">Желание — это не приказ.</p><button className="primary-button" onClick={() => onComplete({ placeholder_viewed: true })}>Оценить желание сейчас</button></Flow>;

@@ -29,8 +29,10 @@ def admin_is_authorized(
 ) -> bool:
     configured_chat_id = settings.support_admin_chat_id_value
     return (
-        configured_chat_id is not None and chat_id == configured_chat_id
-    ) or settings.is_admin(telegram_id)
+        configured_chat_id is not None
+        and chat_id == configured_chat_id
+        and settings.is_admin(telegram_id)
+    )
 
 
 def ticket_card(

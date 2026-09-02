@@ -3,22 +3,34 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    Cookie,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import validate_init_data
 from app.core.config import Settings, get_settings
+from app.core.security import admin_login_guard, raise_rate_limit
 from app.db.models import PaymentOrder, PaymentOrderStatus, ReceiptStatus, User
 from app.db.session import get_session
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
 ADMIN_COOKIE_NAME = "air_admin_session"
 ADMIN_PLAN_TITLES = {
     "air_30_days": "30 дней",
@@ -32,6 +44,10 @@ class AdminLoginRequest(BaseModel):
 
 class ReceiptStatusRequest(BaseModel):
     status: Literal["pending", "sent"]
+
+
+def request_client_ip(request: Request) -> str:
+    return request.client.host if request.client is not None else "unknown"
 
 
 def create_admin_session(password: str, ttl_seconds: int, now: int | None = None) -> str:
@@ -80,7 +96,9 @@ def configured_admin_password(settings: Settings) -> str:
 
 
 async def require_admin(
-    init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    init_data: str | None = Header(
+        default=None, alias="X-Telegram-Init-Data", max_length=16_384
+    ),
     admin_session: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
     settings: Settings = Depends(get_settings),
 ) -> str:
@@ -113,9 +131,15 @@ async def admin_login(
     payload: AdminLoginRequest,
     response: Response,
     settings: Settings = Depends(get_settings),
+    client_ip: str = Depends(request_client_ip),
 ) -> dict[str, bool]:
+    retry_after = await admin_login_guard.retry_after(client_ip)
+    if retry_after is not None:
+        logger.warning("Security admin brute-force block triggered")
+        raise_rate_limit(retry_after)
     password = configured_admin_password(settings)
     if not hmac.compare_digest(payload.password, password):
+        await admin_login_guard.record_failure(client_ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный пароль")
     session_value = create_admin_session(
         password, settings.admin_session_ttl_seconds

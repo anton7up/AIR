@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -53,6 +53,20 @@ def validate_verified_payment(order: PaymentOrder, payment: VerifiedPayment) -> 
         and payment.metadata.get("air_user_id") == str(order.user_id)
         and payment.metadata.get("plan_id") == order.plan_id
     )
+
+
+def _verified_order_identity(
+    payment: VerifiedPayment,
+) -> tuple[int, int, str] | None:
+    try:
+        order_id = int(payment.metadata["air_order_id"])
+        user_id = int(payment.metadata["air_user_id"])
+        plan_id = payment.metadata["plan_id"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if order_id <= 0 or user_id <= 0 or not isinstance(plan_id, str):
+        return None
+    return order_id, user_id, plan_id
 
 
 async def activate_paid_access(
@@ -105,30 +119,79 @@ async def activate_paid_access(
 async def apply_verified_payment(
     session: AsyncSession,
     *,
-    order: PaymentOrder,
+    order_id: int,
     payment: VerifiedPayment,
     now: datetime | None = None,
 ) -> str:
-    if order.status == PaymentOrderStatus.SUCCEEDED:
-        return "already_processed"
-    if not validate_verified_payment(order, payment):
+    identity = _verified_order_identity(payment)
+    if identity is None:
         return "invalid"
-    if payment.status == "canceled":
-        order.status = PaymentOrderStatus.CANCELED
-        await session.commit()
-        return "canceled"
-    if not payment.paid:
+    metadata_order_id, user_id, plan_id = identity
+    if metadata_order_id != order_id or payment.status not in {"succeeded", "canceled"}:
         return "invalid"
 
-    plan = PAYMENT_PLANS.get(order.plan_id)
+    plan = PAYMENT_PLANS.get(plan_id)
     if plan is None:
         return "invalid"
+    if payment.status == "succeeded" and not payment.paid:
+        return "invalid"
+
     paid_at = now or datetime.now(timezone.utc)
-    await activate_paid_access(session, user_id=order.user_id, plan=plan, now=paid_at)
-    order.status = PaymentOrderStatus.SUCCEEDED
-    order.paid_at = paid_at
-    await session.commit()
-    return "succeeded"
+    target_status = (
+        PaymentOrderStatus.SUCCEEDED
+        if payment.status == "succeeded"
+        else PaymentOrderStatus.CANCELED
+    )
+    claimed = await session.execute(
+        update(PaymentOrder)
+        .where(
+            PaymentOrder.id == order_id,
+            PaymentOrder.status == PaymentOrderStatus.PENDING,
+            PaymentOrder.yookassa_payment_id == payment.payment_id,
+            PaymentOrder.user_id == user_id,
+            PaymentOrder.plan_id == plan_id,
+            PaymentOrder.amount == payment.amount,
+            PaymentOrder.currency == payment.currency,
+        )
+        .values(
+            status=target_status,
+            paid_at=paid_at if target_status == PaymentOrderStatus.SUCCEEDED else None,
+        )
+        .returning(PaymentOrder.id)
+        .execution_options(synchronize_session="fetch")
+    )
+
+    if claimed.scalar_one_or_none() is None:
+        await session.commit()
+        existing = await session.scalar(
+            select(PaymentOrder)
+            .where(PaymentOrder.id == order_id)
+            .execution_options(populate_existing=True)
+        )
+        if existing is None or not validate_verified_payment(existing, payment):
+            return "invalid"
+        if existing.status == PaymentOrderStatus.SUCCEEDED:
+            return "already_processed"
+        if (
+            existing.status == PaymentOrderStatus.CANCELED
+            and payment.status == "canceled"
+        ):
+            return "canceled"
+        return "invalid"
+
+    try:
+        if target_status == PaymentOrderStatus.SUCCEEDED:
+            await activate_paid_access(
+                session,
+                user_id=user_id,
+                plan=plan,
+                now=paid_at,
+            )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    return "succeeded" if target_status == PaymentOrderStatus.SUCCEEDED else "canceled"
 
 
 async def find_reusable_pending_order(

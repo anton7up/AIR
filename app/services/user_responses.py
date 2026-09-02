@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import UserResponse, UserResponseType
@@ -38,6 +41,25 @@ def normalize_user_text(value: str) -> str:
 def deduplication_key(value: str) -> str:
     normalized = normalize_user_text(value).casefold()
     return re.sub(r"[\s.!?…,:;]+$", "", normalized).strip()
+
+
+def logical_response_key(
+    response_type: UserResponseType | str,
+    normalized_value: str,
+    context_id: str | None,
+    parent_response_id: int | None,
+    focus: str | None,
+) -> str:
+    """Hash the same composite identity historically used by the SELECT lookup."""
+    payload = [
+        UserResponseType(response_type).value,
+        normalized_value,
+        context_id,
+        parent_response_id,
+        focus,
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def custom_value(text: str) -> str:
@@ -80,19 +102,12 @@ class UserResponseMemory:
         kind = UserResponseType(response_type)
         text = normalize_user_text(value)
         normalized = deduplication_key(text)
+        dedup_key = logical_response_key(
+            kind, normalized, context_id, parent_response_id, focus
+        )
         query = select(UserResponse).where(
             UserResponse.user_id == user_id,
-            UserResponse.response_type == kind,
-            UserResponse.normalized_value == normalized,
-        )
-        query = query.where(
-            UserResponse.context_id.is_(None)
-            if context_id is None
-            else UserResponse.context_id == context_id,
-            UserResponse.parent_response_id.is_(None)
-            if parent_response_id is None
-            else UserResponse.parent_response_id == parent_response_id,
-            UserResponse.focus.is_(None) if focus is None else UserResponse.focus == focus,
+            UserResponse.dedup_key == dedup_key,
         )
         existing = await session.scalar(query.order_by(UserResponse.id).limit(1))
         now = datetime.now(timezone.utc)
@@ -108,6 +123,7 @@ class UserResponseMemory:
             response_type=kind,
             value=text,
             normalized_value=normalized,
+            dedup_key=dedup_key,
             context_id=context_id,
             parent_response_id=parent_response_id,
             focus=focus,
@@ -116,9 +132,21 @@ class UserResponseMemory:
             usage_count=1,
             last_used_at=now,
         )
-        session.add(response)
-        await session.flush()
-        return response
+        try:
+            async with session.begin_nested():
+                session.add(response)
+                await session.flush()
+            return response
+        except IntegrityError:
+            existing = await session.scalar(query.order_by(UserResponse.id).limit(1))
+            if existing is None:
+                raise
+            existing.value = text
+            existing.last_used_at = now
+            if increment_usage:
+                existing.usage_count += 1
+            await session.flush()
+            return existing
 
     async def get(self, session: AsyncSession, user_id: int, response_id: int) -> UserResponse | None:
         return await session.scalar(

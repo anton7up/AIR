@@ -1,6 +1,6 @@
 import { Check, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, eventApi } from "../api/client";
 import type { StepOption, SupportContext } from "../types";
 
 export function NicotineDesireModal({ onClose }: { onClose: (saved: boolean) => void }) {
@@ -15,7 +15,7 @@ export function NicotineDesireModal({ onClose }: { onClose: (saved: boolean) => 
   const save = async () => {
     if (!intensity) return;
     setBusy(true);
-    await api("/nicotine-desire", { method: "POST", body: JSON.stringify({ intensity, trigger_id: trigger, emotion, note }) });
+    await eventApi("/nicotine-desire", { method: "POST", body: JSON.stringify({ intensity, trigger_id: trigger, emotion, note }) });
     setStep(4); setBusy(false);
   };
   return <div className="modal-backdrop"><section className="flow-modal" role="dialog" aria-modal="true">

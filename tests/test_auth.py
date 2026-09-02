@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.auth import get_telegram_identity, validate_init_data
 from app.core.config import Settings
@@ -38,9 +39,48 @@ def test_expired_telegram_init_data_is_rejected() -> None:
         validate_init_data(signed_init_data("token"), "token", 60, now=1_700_001_000)
 
 
+def test_production_without_dev_auth_is_valid() -> None:
+    settings = Settings(_env_file=None, app_env="production", dev_auth_enabled=False)
+
+    assert settings.development_access_enabled is False
+
+
+def test_production_with_dev_auth_fails_configuration() -> None:
+    with pytest.raises(ValidationError, match="DEV_AUTH_ENABLED must be false"):
+        Settings(_env_file=None, app_env="production", dev_auth_enabled=True)
+
+
 @pytest.mark.asyncio
-async def test_dev_header_is_rejected_in_production() -> None:
-    settings = Settings(app_env="production", dev_auth_enabled=True)
+async def test_dev_header_is_rejected_when_disabled_in_development() -> None:
+    settings = Settings(_env_file=None, app_env="development", dev_auth_enabled=False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_telegram_identity(
+            init_data=None,
+            dev_telegram_id=749408538,
+            settings=settings,
+        )
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_dev_header_is_allowed_only_when_enabled_in_development() -> None:
+    settings = Settings(_env_file=None, app_env="development", dev_auth_enabled=True)
+
+    identity = await get_telegram_identity(
+        init_data=None,
+        dev_telegram_id=749408538,
+        settings=settings,
+    )
+
+    assert identity.telegram_id == 749408538
+    assert identity.is_development is True
+
+
+@pytest.mark.asyncio
+async def test_dev_header_cannot_impersonate_in_production() -> None:
+    settings = Settings(_env_file=None, app_env="production", dev_auth_enabled=False)
 
     with pytest.raises(HTTPException) as exc_info:
         await get_telegram_identity(

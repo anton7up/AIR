@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, ForceReply, Message
 from aiogram.types import User as TelegramUser
+from sqlalchemy.exc import IntegrityError
 
 from app.bot.keyboards.support import active_ticket_keyboard, support_intro_keyboard
 from app.bot.states.support import SupportStates
@@ -21,6 +22,7 @@ from app.bot.texts.support import (
     SUPPORT_UNAVAILABLE,
 )
 from app.core.config import Settings, get_settings
+from app.core.security import SUPPORT_POLICY, rate_limiter
 from app.db.models import SupportSenderType, User
 from app.db.session import session_factory
 from app.services.consent import get_or_create_telegram_user
@@ -156,11 +158,29 @@ async def receive_support_message(
     if message.from_user is None or not message.text or not message.text.strip():
         await message.answer("Отправь, пожалуйста, одно текстовое сообщение.")
         return
+    retry_after = await rate_limiter.consume(
+        SUPPORT_POLICY, str(message.from_user.id)
+    )
+    if retry_after is not None:
+        logger.warning("Security rate limit triggered: bucket=support_message")
+        await message.answer(
+            "Слишком много сообщений подряд. Попробуй снова немного позже."
+        )
+        return
     text = message.text.strip()
+    source_message_id = message.message_id
+    source_chat_id = message.chat.id
     state_data = await state.get_data()
     requested_ticket_id = state_data.get("support_ticket_id")
     try:
         async with session_factory() as session:
+            existing = await support_ticket_service.message_by_telegram_source(
+                session, source_chat_id, source_message_id
+            )
+            if existing is not None:
+                await state.clear()
+                await message.answer(SUPPORT_SENT)
+                return
             user = await get_or_create_telegram_user(
                 session,
                 telegram_id=message.from_user.id,
@@ -180,11 +200,19 @@ async def receive_support_message(
             if ticket is None:
                 ticket = await support_ticket_service.create_ticket(session, user.id)
             await support_ticket_service.add_message(
-                session, ticket, SupportSenderType.USER, text
+                session,
+                ticket,
+                SupportSenderType.USER,
+                text,
+                telegram_chat_id=source_chat_id,
+                telegram_message_id=source_message_id,
             )
             access = await support_ticket_service.access_summary(
                 session, user, settings
             )
+            # Persist the stable Telegram source before external delivery. This
+            # gives one update at-most-once delivery even if the handler is retried.
+            await session.commit()
             await send_ticket_to_admin(
                 bot,
                 settings,
@@ -194,7 +222,6 @@ async def receive_support_message(
                 text,
                 continuation=continuation,
             )
-            await session.commit()
     except (SupportConfigurationError, TelegramAPIError):
         logger.exception("Unable to deliver AIR support ticket to admin chat")
         await message.answer(SUPPORT_UNAVAILABLE)
@@ -214,6 +241,11 @@ async def start_admin_reply(callback: CallbackQuery, state: FSMContext) -> None:
         telegram_id=callback.from_user.id,
         chat_id=callback.message.chat.id,
     ):
+        logger.warning(
+            "Unauthorized support admin callback rejected: action=reply telegram_id=%s chat_id=%s",
+            callback.from_user.id,
+            callback.message.chat.id,
+        )
         await callback.answer("Недостаточно прав", show_alert=True)
         return
     ticket_id = callback_ticket_id(callback.data, "support:admin_reply:")
@@ -248,6 +280,11 @@ async def receive_admin_reply(message: Message, state: FSMContext, bot: Bot) -> 
         telegram_id=message.from_user.id,
         chat_id=message.chat.id,
     ):
+        logger.warning(
+            "Unauthorized support admin message rejected: telegram_id=%s chat_id=%s",
+            message.from_user.id if message.from_user else None,
+            message.chat.id,
+        )
         await message.answer("Недостаточно прав")
         await state.clear()
         return
@@ -275,11 +312,20 @@ async def receive_admin_reply(message: Message, state: FSMContext, bot: Bot) -> 
                 ticket,
                 SupportSenderType.ADMIN,
                 message.text.strip(),
+                telegram_chat_id=message.chat.id,
+                telegram_message_id=message.message_id,
             )
             await send_admin_reply_to_user(
                 bot, user, ticket, message.text.strip()
             )
             await session.commit()
+    except IntegrityError:
+        logger.info(
+            "Duplicate support admin update ignored: ticket_id=%s", ticket_id
+        )
+        await state.clear()
+        await message.answer(f"Ответ по обращению #{ticket_id} уже обработан.")
+        return
     except TelegramAPIError as exc:
         logger.exception(
             "Unable to deliver AIR support reply: "
@@ -307,6 +353,11 @@ async def close_support_ticket(
         telegram_id=callback.from_user.id,
         chat_id=callback.message.chat.id,
     ):
+        logger.warning(
+            "Unauthorized support admin callback rejected: action=close telegram_id=%s chat_id=%s",
+            callback.from_user.id,
+            callback.message.chat.id,
+        )
         await callback.answer("Недостаточно прав", show_alert=True)
         return
     ticket_id = callback_ticket_id(callback.data, "support:admin_close:")

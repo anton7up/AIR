@@ -25,6 +25,7 @@ from app.api.admin import (
     router as admin_router,
 )
 from app.core.config import Settings, get_settings
+from app.core.security import admin_login_guard
 from app.db.base import Base
 from app.db.models import (
     PaymentOrder,
@@ -127,14 +128,23 @@ async def test_admin_telegram_init_data_gets_access(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_wrong_password_is_rejected_and_correct_password_sets_secure_cookie() -> None:
+    await admin_login_guard.reset()
     response = Response()
     with pytest.raises(HTTPException) as exc_info:
-        await admin_login(AdminLoginRequest(password="wrong"), response, settings())
+        await admin_login(
+            AdminLoginRequest(password="wrong"),
+            response,
+            settings(),
+            "198.51.100.100",
+        )
     assert exc_info.value.status_code == 401
 
     response = Response()
     assert await admin_login(
-        AdminLoginRequest(password="strong-admin-password"), response, settings()
+        AdminLoginRequest(password="strong-admin-password"),
+        response,
+        settings(),
+        "198.51.100.100",
     ) == {"authenticated": True}
     header = response.headers["set-cookie"]
     assert "HttpOnly" in header

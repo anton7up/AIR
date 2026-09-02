@@ -70,11 +70,15 @@ class SupportTicketService:
         ticket: SupportTicket,
         sender_type: SupportSenderType,
         text: str,
+        telegram_chat_id: int | None = None,
+        telegram_message_id: int | None = None,
     ) -> SupportMessage:
         message = SupportMessage(
             ticket_id=ticket.id,
             sender_type=sender_type,
             text=text,
+            telegram_chat_id=telegram_chat_id,
+            telegram_message_id=telegram_message_id,
         )
         session.add(message)
         ticket.updated_at = datetime.now(timezone.utc)
@@ -84,6 +88,19 @@ class SupportTicketService:
             ticket.status = SupportTicketStatus.OPEN
         await session.flush()
         return message
+
+    async def message_by_telegram_source(
+        self,
+        session: AsyncSession,
+        telegram_chat_id: int,
+        telegram_message_id: int,
+    ) -> SupportMessage | None:
+        return await session.scalar(
+            select(SupportMessage).where(
+                SupportMessage.telegram_chat_id == telegram_chat_id,
+                SupportMessage.telegram_message_id == telegram_message_id,
+            )
+        )
 
     async def close_ticket(
         self, session: AsyncSession, ticket: SupportTicket

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.bot.handlers import support as support_handlers
 from app.bot.texts.support import SUPPORT_INTRO, SUPPORT_SENT, SUPPORT_UNAVAILABLE
 from app.core.config import Settings
+from app.core.security import rate_limiter
 from app.db.base import Base
 from app.db.models import (
     SupportMessage,
@@ -88,6 +89,8 @@ class FakeState:
 
 
 class FakeMessage:
+    _next_message_id = 1
+
     def __init__(
         self,
         *,
@@ -97,7 +100,10 @@ class FakeMessage:
         text: str | None = None,
         chat_id: int | None = None,
         chat_type: str = "private",
+        message_id: int | None = None,
     ) -> None:
+        self.message_id = message_id or self._next_message_id
+        FakeMessage._next_message_id += 1
         self.from_user = SimpleNamespace(
             id=telegram_id,
             first_name=first_name,
@@ -284,6 +290,61 @@ async def test_repeated_support_message_continues_the_only_active_ticket(
 
 
 @pytest.mark.asyncio
+async def test_same_telegram_support_update_is_stored_and_delivered_once(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions, engine = await make_sessions(tmp_path)
+    monkeypatch.setattr(support_handlers, "session_factory", sessions)
+    monkeypatch.setattr(
+        support_handlers, "get_settings", lambda: support_settings()
+    )
+    bot = FakeBot()
+    for _ in range(2):
+        await support_handlers.receive_support_message(  # type: ignore[arg-type]
+            FakeMessage(
+                telegram_id=1011,
+                text="Один Telegram update",
+                message_id=777,
+            ),
+            FakeState({"support_ticket_id": None}),
+            bot,
+        )
+
+    async with sessions() as session:
+        assert await session.scalar(select(func.count(SupportMessage.id))) == 1
+    assert len(bot.sent) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_support_messages_are_rate_limited_per_telegram_user(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await rate_limiter.reset()
+    sessions, engine = await make_sessions(tmp_path)
+    monkeypatch.setattr(support_handlers, "session_factory", sessions)
+    monkeypatch.setattr(
+        support_handlers, "get_settings", lambda: support_settings()
+    )
+    bot = FakeBot()
+
+    for number in range(6):
+        message = FakeMessage(telegram_id=1010, text=f"Сообщение {number}")
+        await support_handlers.receive_support_message(  # type: ignore[arg-type]
+            message, FakeState({"support_ticket_id": None}), bot
+        )
+        if number < 5:
+            assert message.answers[-1][0] == SUPPORT_SENT
+        else:
+            assert "Слишком много сообщений" in message.answers[-1][0]
+
+    async with sessions() as session:
+        assert await session.scalar(select(func.count(SupportMessage.id))) == 5
+    await rate_limiter.reset()
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_admin_reply_is_saved_and_delivered_to_correct_user(tmp_path) -> None:
     sessions, engine = await make_sessions(tmp_path)
     bot = FakeBot()
@@ -458,7 +519,7 @@ async def test_regular_user_cannot_enter_admin_reply_flow(
     callback, callback_bot = admin_callback(
         1,
         telegram_id=999999,
-        chat_id=-200987654321,
+        chat_id=-100123456789,
     )
     state = FakeState()
 
@@ -535,10 +596,13 @@ async def test_closed_ticket_rejects_reply_and_allows_new_ticket(tmp_path) -> No
     await engine.dispose()
 
 
-def test_admin_callbacks_require_admin_chat_or_allowlisted_admin() -> None:
+def test_admin_callbacks_require_admin_chat_and_allowlisted_admin() -> None:
     settings = support_settings()
-    assert admin_is_authorized(settings, telegram_id=1, chat_id=-100123456789)
-    assert admin_is_authorized(settings, telegram_id=749408538, chat_id=123)
+    assert admin_is_authorized(
+        settings, telegram_id=749408538, chat_id=-100123456789
+    )
+    assert not admin_is_authorized(settings, telegram_id=1, chat_id=-100123456789)
+    assert not admin_is_authorized(settings, telegram_id=749408538, chat_id=123)
     assert not admin_is_authorized(settings, telegram_id=999, chat_id=123)
 
 

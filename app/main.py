@@ -20,6 +20,8 @@ async def main() -> None:
             host=settings.api_host,
             port=settings.api_port,
             log_level=settings.log_level.lower(),
+            proxy_headers=False,
+            server_header=False,
         )
     )
     await asyncio.gather(server.serve(), run_bot(settings))
@@ -27,4 +29,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

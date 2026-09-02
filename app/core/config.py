@@ -1,10 +1,11 @@
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    public_host: str = "airtgbot.ru"
     bot_token: SecretStr | None = None
     database_url: str = "sqlite+aiosqlite:///./air.db"
     mini_app_url: str | None = None
@@ -21,7 +22,9 @@ class Settings(BaseSettings):
     admin_panel_password: SecretStr | None = None
     admin_session_ttl_seconds: int = 28800
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
-    telegram_init_data_max_age_seconds: int = 86400
+    telegram_init_data_max_age_seconds: int = 1800
+    trusted_proxy_cidrs: str = ""
+    max_request_body_bytes: int = 262144
     support_url: str | None = None
     support_admin_chat_id: str = ""
     terms_url: str | None = None
@@ -29,6 +32,14 @@ class Settings(BaseSettings):
     yookassa_shop_id: str | None = None
     yookassa_secret_key: SecretStr | None = None
     yookassa_return_url: str | None = None
+
+    @model_validator(mode="after")
+    def reject_dev_auth_in_production(self) -> "Settings":
+        if self.app_env.strip().lower() == "production" and self.dev_auth_enabled:
+            raise ValueError(
+                "DEV_AUTH_ENABLED must be false when APP_ENV=production"
+            )
+        return self
 
     @property
     def yookassa_configured(self) -> bool:
@@ -39,12 +50,24 @@ class Settings(BaseSettings):
         )
 
     @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() == "production"
+
+    @property
+    def production_host_list(self) -> tuple[str, ...]:
+        host = self.public_host.strip().casefold()
+        return (host,) if host else ("airtgbot.ru",)
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
     def development_access_enabled(self) -> bool:
-        return self.app_env == "development" and self.dev_auth_enabled
+        return (
+            self.app_env.strip().lower() == "development"
+            and self.dev_auth_enabled
+        )
 
     @property
     def program_dev_telegram_ids(self) -> set[int]:

@@ -1,13 +1,26 @@
 import hashlib
 import hmac
 import json
+import logging
 import time
 from dataclasses import dataclass
 from urllib.parse import parse_qsl
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 from app.core.config import Settings, get_settings
+from app.core.security import (
+    NORMAL_READ_POLICY,
+    PAYMENT_CREATE_POLICY,
+    PAYMENT_STATUS_POLICY,
+    PROGRAM_WRITE_POLICY,
+    USER_EVENT_POLICY,
+    RateLimitPolicy,
+    raise_rate_limit,
+    rate_limiter,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -49,7 +62,9 @@ def validate_init_data(
 
 
 async def get_telegram_identity(
-    init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    init_data: str | None = Header(
+        default=None, alias="X-Telegram-Init-Data", max_length=16_384
+    ),
     dev_telegram_id: int | None = Header(default=None, alias="X-Dev-Telegram-Id"),
     settings: Settings = Depends(get_settings),
 ) -> TelegramIdentity:
@@ -63,7 +78,46 @@ async def get_telegram_identity(
                 settings.telegram_init_data_max_age_seconds,
             )
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Telegram initData rejected: reason_type=%s", type(exc).__name__
+            )
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Не удалось подтвердить данные Telegram") from exc
     if settings.development_access_enabled and dev_telegram_id is not None:
         return TelegramIdentity(dev_telegram_id, "Dev", is_development=True)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Открой AIR из Telegram")
+
+
+def _request_rate_policy(request: Request) -> tuple[RateLimitPolicy, str]:
+    path = request.url.path
+    if path == "/api/v1/payments/create":
+        return PAYMENT_CREATE_POLICY, "create"
+    if path.startswith("/api/v1/payments/") and path.endswith("/status"):
+        order_id = request.path_params.get("order_id", "unknown")
+        return PAYMENT_STATUS_POLICY, f"status:{order_id}"
+    if request.method == "GET" or path.endswith("/access/refresh"):
+        return NORMAL_READ_POLICY, path
+    if (
+        "/sos" in path
+        or path.endswith("/nicotine-desire")
+        or path.endswith("/lapse")
+        or path.endswith("/quit-attempt/restart")
+    ):
+        return USER_EVENT_POLICY, path
+    return PROGRAM_WRITE_POLICY, path
+
+
+async def get_rate_limited_telegram_identity(
+    request: Request,
+    identity: TelegramIdentity = Depends(get_telegram_identity),
+) -> TelegramIdentity:
+    policy, endpoint_bucket = _request_rate_policy(request)
+    identifier = f"{identity.telegram_id}:{endpoint_bucket}"
+    retry_after = await rate_limiter.consume(policy, identifier)
+    if retry_after is not None:
+        logger.warning(
+            "Security rate limit triggered: bucket=%s path=%s",
+            policy.name,
+            request.url.path,
+        )
+        raise_rate_limit(retry_after)
+    return identity

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -26,7 +27,12 @@ from app.db.models import (
     SubscriptionStatus,
     User,
 )
-from app.services.payments import PAYMENT_PLANS, activate_paid_access, payment_return_url
+from app.services.payments import (
+    PAYMENT_PLANS,
+    activate_paid_access,
+    apply_verified_payment,
+    payment_return_url,
+)
 from app.services.yookassa import CreatedPayment, VerifiedPayment
 
 
@@ -34,15 +40,29 @@ class FakeGateway:
     def __init__(self) -> None:
         self.created: list[dict[str, object]] = []
         self.verified: VerifiedPayment | None = None
+        self.get_calls = 0
 
     async def create_payment(self, **kwargs) -> CreatedPayment:
         self.created.append(kwargs)
         return CreatedPayment("yk-payment-1", "pending", "https://yookassa.test/pay/1")
 
     async def get_payment(self, payment_id: str) -> VerifiedPayment:
+        self.get_calls += 1
         assert self.verified is not None
         assert payment_id == self.verified.payment_id
         return self.verified
+
+
+class FailingOnceGateway(FakeGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = False
+
+    async def get_payment(self, payment_id: str) -> VerifiedPayment:
+        if not self.failed:
+            self.failed = True
+            raise ConnectionError("temporary YooKassa error")
+        return await super().get_payment(payment_id)
 
 
 def payment_settings() -> Settings:
@@ -60,6 +80,13 @@ async def make_session(tmp_path: Path):
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     return async_sessionmaker(engine, expire_on_commit=False)(), engine
+
+
+async def make_session_factory(tmp_path: Path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'concurrency.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    return async_sessionmaker(engine, expire_on_commit=False), engine
 
 
 async def make_user(session, telegram_id: int = 1001) -> User:
@@ -199,9 +226,227 @@ async def test_succeeded_webhook_is_verified_and_idempotent(tmp_path: Path) -> N
         assert await session.scalar(
             select(func.count(Subscription.id)).where(Subscription.user_id == user.id)
         ) == 1
+        subscription = await session.scalar(
+            select(Subscription).where(Subscription.user_id == user.id)
+        )
+        assert subscription is not None
+        assert subscription.ends_at is not None
+        paid_at = order.paid_at
+        assert paid_at is not None
+        if subscription.ends_at.tzinfo is None:
+            subscription.ends_at = subscription.ends_at.replace(tzinfo=timezone.utc)
+        if paid_at.tzinfo is None:
+            paid_at = paid_at.replace(tzinfo=timezone.utc)
+        assert subscription.ends_at == paid_at + timedelta(days=30)
         await session.refresh(order)
         assert order.status == PaymentOrderStatus.SUCCEEDED
         assert order.paid_at is not None
+    await engine.dispose()
+
+
+async def create_order_for_concurrency(
+    session_factory,
+    gateway: FakeGateway,
+    *,
+    plan_id: str,
+) -> tuple[int, int, int]:
+    async with session_factory() as session:
+        user = await make_user(session)
+        created = await create_payment(
+            CreatePaymentRequest(plan_id=plan_id, email="buyer@example.com"),
+            TelegramIdentity(user.telegram_id, "Buyer"),
+            session,
+            payment_settings(),
+            gateway,
+        )
+        order = await session.get(PaymentOrder, created["order_id"])
+        assert order is not None
+        gateway.verified = VerifiedPayment(
+            payment_id="yk-payment-1",
+            status="succeeded",
+            paid=True,
+            amount=PAYMENT_PLANS[plan_id].amount,
+            currency="RUB",
+            metadata={
+                "air_order_id": str(order.id),
+                "air_user_id": str(user.id),
+                "plan_id": plan_id,
+            },
+        )
+        return order.id, user.id, user.telegram_id
+
+
+async def subscription_count(session_factory, user_id: int) -> int:
+    async with session_factory() as session:
+        return int(
+            await session.scalar(
+                select(func.count(Subscription.id)).where(
+                    Subscription.user_id == user_id
+                )
+            )
+            or 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_webhooks_grant_access_once(tmp_path: Path) -> None:
+    session_factory, engine = await make_session_factory(tmp_path)
+    gateway = FakeGateway()
+    order_id, user_id, _ = await create_order_for_concurrency(
+        session_factory, gateway, plan_id="air_lifetime"
+    )
+    event = YooKassaWebhook(event="payment.succeeded", object={"id": "yk-payment-1"})
+
+    async def send_webhook() -> dict[str, str]:
+        async with session_factory() as session:
+            return await yookassa_webhook(event, session, gateway)
+
+    results = await asyncio.gather(send_webhook(), send_webhook())
+
+    assert sorted(result["status"] for result in results) == [
+        "already_processed",
+        "succeeded",
+    ]
+    assert await subscription_count(session_factory, user_id) == 1
+    assert gateway.get_calls == 1
+    async with session_factory() as session:
+        order = await session.get(PaymentOrder, order_id)
+        assert order is not None
+        assert order.status == PaymentOrderStatus.SUCCEEDED
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_atomic_payment_claim_survives_independent_workers(tmp_path: Path) -> None:
+    session_factory, engine = await make_session_factory(tmp_path)
+    gateway = FakeGateway()
+    order_id, user_id, _ = await create_order_for_concurrency(
+        session_factory, gateway, plan_id="air_lifetime"
+    )
+    assert gateway.verified is not None
+
+    async def apply_from_worker() -> str:
+        async with session_factory() as session:
+            return await apply_verified_payment(
+                session,
+                order_id=order_id,
+                payment=gateway.verified,
+            )
+
+    results = await asyncio.gather(apply_from_worker(), apply_from_worker())
+
+    assert sorted(results) == ["already_processed", "succeeded"]
+    assert await subscription_count(session_factory, user_id) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_webhook_retry_after_network_error_grants_access_once(tmp_path: Path) -> None:
+    session_factory, engine = await make_session_factory(tmp_path)
+    gateway = FailingOnceGateway()
+    order_id, user_id, _ = await create_order_for_concurrency(
+        session_factory, gateway, plan_id="air_30_days"
+    )
+    event = YooKassaWebhook(event="payment.succeeded", object={"id": "yk-payment-1"})
+
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            await yookassa_webhook(event, session, gateway)
+        assert exc_info.value.status_code == 503
+
+    async with session_factory() as session:
+        order = await session.get(PaymentOrder, order_id)
+        assert order is not None
+        assert order.status == PaymentOrderStatus.PENDING
+    assert await subscription_count(session_factory, user_id) == 0
+
+    async with session_factory() as session:
+        assert await yookassa_webhook(event, session, gateway) == {
+            "status": "succeeded"
+        }
+    assert await subscription_count(session_factory, user_id) == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_webhook_and_status_race_grant_access_once(tmp_path: Path) -> None:
+    session_factory, engine = await make_session_factory(tmp_path)
+    gateway = FakeGateway()
+    order_id, user_id, telegram_id = await create_order_for_concurrency(
+        session_factory, gateway, plan_id="air_30_days"
+    )
+    event = YooKassaWebhook(event="payment.succeeded", object={"id": "yk-payment-1"})
+
+    async def send_webhook() -> dict[str, str]:
+        async with session_factory() as session:
+            return await yookassa_webhook(event, session, gateway)
+
+    async def check_status() -> dict[str, object]:
+        async with session_factory() as session:
+            return await payment_status(
+                order_id,
+                TelegramIdentity(telegram_id, "Buyer"),
+                session,
+                payment_settings(),
+                gateway,
+            )
+
+    webhook_result, status_result = await asyncio.gather(send_webhook(), check_status())
+
+    assert webhook_result["status"] in {"succeeded", "already_processed"}
+    assert status_result["status"] == "succeeded"
+    assert await subscription_count(session_factory, user_id) == 1
+    assert gateway.get_calls == 1
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_status_requests_grant_access_once(tmp_path: Path) -> None:
+    session_factory, engine = await make_session_factory(tmp_path)
+    gateway = FakeGateway()
+    order_id, user_id, telegram_id = await create_order_for_concurrency(
+        session_factory, gateway, plan_id="air_30_days"
+    )
+    existing_end = datetime.now(timezone.utc) + timedelta(days=10)
+    async with session_factory() as session:
+        session.add(
+            Subscription(
+                user_id=user_id,
+                plan="air_30_days",
+                status=SubscriptionStatus.ACTIVE,
+                starts_at=datetime.now(timezone.utc),
+                ends_at=existing_end,
+            )
+        )
+        await session.commit()
+
+    async def check_status() -> dict[str, object]:
+        async with session_factory() as session:
+            return await payment_status(
+                order_id,
+                TelegramIdentity(telegram_id, "Buyer"),
+                session,
+                payment_settings(),
+                gateway,
+            )
+
+    results = await asyncio.gather(check_status(), check_status())
+
+    assert [result["status"] for result in results] == ["succeeded", "succeeded"]
+    assert await subscription_count(session_factory, user_id) == 2
+    assert gateway.get_calls == 1
+    async with session_factory() as session:
+        newest = await session.scalar(
+            select(Subscription)
+            .where(Subscription.user_id == user_id)
+            .order_by(Subscription.id.desc())
+        )
+        assert newest is not None
+        assert newest.ends_at is not None
+        newest_end = newest.ends_at
+        if newest_end.tzinfo is None:
+            newest_end = newest_end.replace(tzinfo=timezone.utc)
+        assert newest_end == existing_end + timedelta(days=30)
     await engine.dispose()
 
 
