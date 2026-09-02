@@ -4,12 +4,21 @@ export const AIR_BOT_USERNAME = "airnosmokebot";
 // Opening the bot is the reliable external-browser fallback on iOS.
 export const AIR_TELEGRAM_URL = `https://t.me/${AIR_BOT_USERNAME}`;
 export const AIR_SUPPORT_URL = `${AIR_TELEGRAM_URL}?start=support`;
+export const AIR_EDIT_PROFILE_URL = `${AIR_TELEGRAM_URL}?start=edit_profile`;
 
-export function openAirSupport(): void {
+export function openTelegramUrl(url: string): void {
   const telegram = window.Telegram?.WebApp;
   if (telegram?.openTelegramLink) {
-    telegram.openTelegramLink(AIR_SUPPORT_URL);
+    telegram.openTelegramLink(url);
     return;
   }
-  window.location.assign(AIR_SUPPORT_URL);
+  window.location.assign(url);
+}
+
+export function openAirSupport(): void {
+  openTelegramUrl(AIR_SUPPORT_URL);
+}
+
+export function openAirEditProfile(): void {
+  openTelegramUrl(AIR_EDIT_PROFILE_URL);
 }

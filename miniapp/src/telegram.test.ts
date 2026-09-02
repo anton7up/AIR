@@ -1,10 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AIR_SUPPORT_URL, openAirSupport } from "./telegram";
+import { AIR_EDIT_PROFILE_URL, AIR_SUPPORT_URL, openAirEditProfile, openAirSupport } from "./telegram";
 
 describe("AIR Telegram support link", () => {
   it("uses the existing bot with a support start parameter", () => {
     expect(AIR_SUPPORT_URL).toBe("https://t.me/airnosmokebot?start=support");
+    expect(AIR_EDIT_PROFILE_URL).toBe("https://t.me/airnosmokebot?start=edit_profile");
+  });
+
+  it("opens profile editing through Telegram", () => {
+    const openTelegramLink = vi.fn();
+    vi.stubGlobal("window", {
+      Telegram: { WebApp: { openTelegramLink } },
+      location: { assign: vi.fn() },
+    });
+    openAirEditProfile();
+    expect(openTelegramLink).toHaveBeenCalledWith(AIR_EDIT_PROFILE_URL);
+    vi.unstubAllGlobals();
   });
 
   it("uses Telegram openTelegramLink when available", () => {

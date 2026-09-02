@@ -24,6 +24,12 @@ class FakeState:
     async def set_state(self, state: object) -> None:
         self.state = state
 
+    async def get_state(self) -> str | None:
+        return getattr(self.state, "state", self.state)
+
+    async def get_data(self) -> dict[str, object]:
+        return self.data
+
     async def update_data(self, **data: object) -> None:
         self.data.update(data)
 

@@ -6,23 +6,35 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.types import User as TelegramUser
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.onboarding import (
     choices_keyboard,
     consent_declined_keyboard,
     consent_keyboard,
+    onboarding_restart_confirmation_keyboard,
+    onboarding_resume_keyboard,
     open_air_keyboard,
+    repeat_onboarding_confirmation_keyboard,
+    returning_user_keyboard,
 )
 from app.bot.states.onboarding import OnboardingStates
 from app.bot.texts.messages import (
+    EDIT_PROFILE_CONFIRMATION,
     INVALID_CHOICE,
     MINI_APP_NOT_READY,
+    ONBOARDING_RESTART_CONFIRMATION,
+    ONBOARDING_RESUME,
     PERSONAL_DATA_CONSENT,
     PERSONAL_DATA_CONSENT_DECLINED,
+    REPEAT_ONBOARDING_CONFIRMATION,
+    RETURNING_USER,
     WELCOME,
     result_message,
 )
 from app.core.config import get_settings
+from app.db.models import SmokingProfile
 from app.db.repositories import UserRepository
 from app.db.session import session_factory
 from app.onboarding.engine import InvalidAnswer, OnboardingEngine
@@ -39,6 +51,29 @@ from app.services.expenses import ExpenseCalculator
 router = Router(name="onboarding")
 engine = OnboardingEngine()
 calculator = ExpenseCalculator()
+
+PARTIAL_ONBOARDING_STATES = {
+    OnboardingStates.answering.state,
+    OnboardingStates.resume_choice.state,
+    OnboardingStates.restart_confirmation.state,
+}
+
+
+async def has_completed_onboarding(session: AsyncSession, user_id: int) -> bool:
+    profile_id = await session.scalar(
+        select(SmokingProfile.id).where(SmokingProfile.user_id == user_id)
+    )
+    return profile_id is not None
+
+
+def has_partial_onboarding(
+    state_name: str | None, data: dict[str, Any]
+) -> bool:
+    return (
+        state_name in PARTIAL_ONBOARDING_STATES
+        and isinstance(data.get("current_question"), str)
+        and isinstance(data.get("answers"), dict)
+    )
 
 
 async def send_question(message: Message, question: Question) -> None:
@@ -64,11 +99,30 @@ async def show_consent(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
-async def start_onboarding(message: Message, state: FSMContext) -> None:
+async def show_resume_choice(message: Message, state: FSMContext) -> None:
+    await state.set_state(OnboardingStates.resume_choice)
+    await message.answer(ONBOARDING_RESUME, reply_markup=onboarding_resume_keyboard())
+
+
+async def show_returning_user(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(OnboardingStates.returning)
+    await message.answer(
+        RETURNING_USER,
+        reply_markup=returning_user_keyboard(get_settings().mini_app_url),
+    )
+
+
+async def route_onboarding_start(
+    message: Message,
+    state: FSMContext,
+    *,
+    edit_profile: bool = False,
+) -> None:
     if message.chat.type != ChatType.PRIVATE:
         return
-    await state.clear()
+    state_name = await state.get_state()
+    state_data = await state.get_data()
     telegram_user = message.from_user
     if telegram_user is None:
         await message.answer("Не удалось прочитать данные Telegram. Попробуй /start ещё раз.")
@@ -81,11 +135,41 @@ async def start_onboarding(message: Message, state: FSMContext) -> None:
             username=telegram_user.username,
         )
         accepted = has_current_personal_data_consent(user)
+        completed = await has_completed_onboarding(session, user.id)
         await session.commit()
-    if accepted:
-        await begin_questions(message, state, telegram_user.first_name)
+    if not accepted:
+        await state.clear()
+        await show_consent(message, state)
         return
-    await show_consent(message, state)
+    if has_partial_onboarding(state_name, state_data):
+        await show_resume_choice(message, state)
+        return
+    if completed:
+        if edit_profile:
+            await state.clear()
+            await state.set_state(OnboardingStates.repeat_confirmation)
+            await message.answer(
+                EDIT_PROFILE_CONFIRMATION,
+                reply_markup=repeat_onboarding_confirmation_keyboard(),
+            )
+            return
+        await show_returning_user(message, state)
+        return
+    await state.clear()
+    await begin_questions(message, state, telegram_user.first_name)
+
+
+@router.message(
+    F.text.regexp(r"^/start(?:@\w+)?\s+edit_profile\s*$"),
+    F.chat.type == ChatType.PRIVATE,
+)
+async def edit_profile_deep_link(message: Message, state: FSMContext) -> None:
+    await route_onboarding_start(message, state, edit_profile=True)
+
+
+@router.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
+async def start_onboarding(message: Message, state: FSMContext) -> None:
+    await route_onboarding_start(message, state)
 
 
 @router.callback_query(OnboardingStates.awaiting_consent, F.data == "consent:accept")
@@ -102,10 +186,167 @@ async def accept_consent(callback: CallbackQuery, state: FSMContext) -> None:
             username=telegram_user.username,
         )
         await accept_personal_data_consent(session, user)
+        completed = await has_completed_onboarding(session, user.id)
         await session.commit()
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
+    if completed:
+        await show_returning_user(callback.message, state)
+        return
     await begin_questions(callback.message, state, telegram_user.first_name)
+
+
+@router.callback_query(
+    OnboardingStates.resume_choice,
+    F.data == "onboarding:continue",
+)
+async def continue_onboarding(callback: CallbackQuery, state: FSMContext) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    data = await state.get_data()
+    current_question = data.get("current_question")
+    if not isinstance(current_question, str):
+        await callback.answer("Не удалось восстановить вопрос. Начнём сначала.")
+        await state.clear()
+        await begin_questions(callback.message, state, callback.from_user.first_name)
+        return
+    try:
+        question = engine.question(current_question)
+    except KeyError:
+        await callback.answer("Не удалось восстановить вопрос. Начнём сначала.")
+        await state.clear()
+        await begin_questions(callback.message, state, callback.from_user.first_name)
+        return
+    await state.set_state(OnboardingStates.answering)
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await send_question(callback.message, question)
+
+
+@router.callback_query(
+    OnboardingStates.resume_choice,
+    F.data == "onboarding:restart_request",
+)
+async def request_onboarding_restart(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await state.set_state(OnboardingStates.restart_confirmation)
+    await callback.answer()
+    await callback.message.edit_text(
+        ONBOARDING_RESTART_CONFIRMATION,
+        reply_markup=onboarding_restart_confirmation_keyboard(),
+    )
+
+
+@router.callback_query(
+    OnboardingStates.restart_confirmation,
+    F.data == "onboarding:restart_cancel",
+)
+async def cancel_onboarding_restart(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await state.set_state(OnboardingStates.resume_choice)
+    await callback.answer()
+    await callback.message.edit_text(
+        ONBOARDING_RESUME,
+        reply_markup=onboarding_resume_keyboard(),
+    )
+
+
+@router.callback_query(
+    OnboardingStates.restart_confirmation,
+    F.data == "onboarding:restart_confirm",
+)
+async def confirm_onboarding_restart(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.clear()
+    await begin_questions(callback.message, state, callback.from_user.first_name)
+
+
+@router.callback_query(
+    OnboardingStates.returning,
+    F.data == "onboarding:repeat_request",
+)
+async def request_repeat_onboarding(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await state.set_state(OnboardingStates.repeat_confirmation)
+    await callback.answer()
+    await callback.message.edit_text(
+        REPEAT_ONBOARDING_CONFIRMATION,
+        reply_markup=repeat_onboarding_confirmation_keyboard(),
+    )
+
+
+@router.callback_query(
+    OnboardingStates.repeat_confirmation,
+    F.data == "onboarding:repeat_cancel",
+)
+async def cancel_repeat_onboarding(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await state.set_state(OnboardingStates.returning)
+    await callback.answer()
+    await callback.message.edit_text(
+        RETURNING_USER,
+        reply_markup=returning_user_keyboard(get_settings().mini_app_url),
+    )
+
+
+@router.callback_query(
+    OnboardingStates.repeat_confirmation,
+    F.data == "onboarding:repeat_confirm",
+)
+async def confirm_repeat_onboarding(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.clear()
+    await begin_questions(callback.message, state, callback.from_user.first_name)
+
+
+@router.callback_query(
+    OnboardingStates.returning,
+    F.data == "onboarding:open_support",
+)
+async def open_support_from_returning_user(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    if not isinstance(callback.message, Message):
+        await callback.answer()
+        return
+    from app.bot.handlers.support import open_support_flow
+
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await open_support_flow(
+        callback.message,
+        state,
+        telegram_user=callback.from_user,
+    )
 
 
 @router.callback_query(OnboardingStates.awaiting_consent, F.data == "consent:decline")

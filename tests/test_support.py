@@ -184,6 +184,25 @@ async def test_support_command_opens_flow_without_creating_ticket(
 
 
 @pytest.mark.asyncio
+async def test_start_support_deep_link_still_opens_support_flow(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions, engine = await make_sessions(tmp_path)
+    monkeypatch.setattr(support_handlers, "session_factory", sessions)
+    monkeypatch.setattr(
+        support_handlers, "get_settings", lambda: support_settings()
+    )
+    message = FakeMessage(telegram_id=1007, text="/start support")
+    state = FakeState()
+
+    await support_handlers.support_deep_link(message, state)  # type: ignore[arg-type]
+
+    assert message.answers[0][0] == SUPPORT_INTRO
+    assert state.cleared is True
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("chat_type", ["group", "supergroup"])
 async def test_support_command_does_not_start_user_flow_in_groups(
     chat_type: str,

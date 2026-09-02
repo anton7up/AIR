@@ -45,6 +45,7 @@ function AirApplication() {
   const [busy, setBusy] = useState(false);
   const [desireOpen, setDesireOpen] = useState(false);
   const [paywallView, setPaywallView] = useState<PaywallView>("landing");
+  const [profilePlansOpen, setProfilePlansOpen] = useState(false);
   const [returnOrderId, setReturnOrderId] = useState<number | null>(() => {
     const params = new URLSearchParams(window.location.search);
     const value = params.get("payment") === "return" ? Number(params.get("order_id")) : NaN;
@@ -146,6 +147,7 @@ function AirApplication() {
     : tab === "program" && data.program ? <Program data={data.program} onGoSos={() => setTab("sos")} onGoProgress={() => setTab("progress")} />
     : tab === "sos" ? <Sos onAttemptChanged={refreshAttemptData} onAttemptRestarted={handleAttemptRestarted} onGoHome={() => setTab("home")} />
     : tab === "progress" && data.progress ? <Progress data={data.progress} />
-    : tab === "profile" && data.profile ? <Profile data={data.profile} isAdmin={access.is_admin} /> : <Loading />;
-  return <div className="app-shell">{screen}{desireOpen && <NicotineDesireModal onClose={() => setDesireOpen(false)} />}<BottomNav tab={tab} onChange={setTab} /></div>;
+    : tab === "profile" && data.profile && profilePlansOpen ? <Plans links={access.links} initialEmail={access.receipt_email} onBack={() => setProfilePlansOpen(false)} onPaymentSucceeded={() => { setProfilePlansOpen(false); void loadAccess(); }} />
+    : tab === "profile" && data.profile ? <Profile data={data.profile} access={access} isAdmin={access.is_admin} onOpenPlans={() => setProfilePlansOpen(true)} /> : <Loading />;
+  return <div className="app-shell">{screen}{desireOpen && <NicotineDesireModal onClose={() => setDesireOpen(false)} />}<BottomNav tab={tab} onChange={nextTab => { if (nextTab !== "profile" || tab !== "profile") setProfilePlansOpen(false); setTab(nextTab); }} /></div>;
 }

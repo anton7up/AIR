@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { Profile } from "./Profile";
-import type { Profile as ProfileType } from "../types";
+import type { Access, Profile as ProfileType } from "../types";
 
 const profile: ProfileType = {
   first_name: "Admin",
@@ -17,11 +17,15 @@ const profile: ProfileType = {
   motivation: null,
   links: { support: null, terms: null, privacy: null },
 };
+const access: Access = { status: "active", plan: "air_30_days", ends_at: "2026-10-01T00:00:00Z", development_activation_available: false, receipt_email: null, is_admin: false, links: { support: null, terms: null, privacy: null } };
 
 describe("payments admin entry", () => {
   it("is hidden for ordinary users and visible only with the backend admin flag", () => {
-    expect(renderToStaticMarkup(<Profile data={profile} isAdmin={false} />)).not.toContain("Админка платежей");
-    expect(renderToStaticMarkup(<Profile data={profile} isAdmin />)).toContain("Админка платежей");
+    expect(renderToStaticMarkup(<Profile data={profile} access={access} isAdmin={false} onOpenPlans={() => undefined} />)).not.toContain("Админка платежей");
+    const adminMarkup = renderToStaticMarkup(<Profile data={profile} access={access} isAdmin onOpenPlans={() => undefined} />);
+    expect(adminMarkup).toContain("Админка платежей");
+    expect(adminMarkup.indexOf("Изменить данные")).toBeLessThan(adminMarkup.indexOf("Админка платежей"));
+    expect(adminMarkup.indexOf("Админка платежей")).toBeLessThan(adminMarkup.indexOf("Поддержка"));
   });
 
   it("uses protected admin endpoints and provides the required filters", () => {

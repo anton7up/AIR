@@ -8,6 +8,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, ForceReply, Message
+from aiogram.types import User as TelegramUser
 
 from app.bot.keyboards.support import active_ticket_keyboard, support_intro_keyboard
 from app.bot.states.support import SupportStates
@@ -55,12 +56,17 @@ def configured_settings() -> Settings | None:
     return settings
 
 
-async def open_support_flow(message: Message, state: FSMContext) -> None:
+async def open_support_flow(
+    message: Message,
+    state: FSMContext,
+    *,
+    telegram_user: TelegramUser | None = None,
+) -> None:
     await state.clear()
     if configured_settings() is None:
         await message.answer(SUPPORT_UNAVAILABLE)
         return
-    telegram_user = message.from_user
+    telegram_user = telegram_user or message.from_user
     if telegram_user is None:
         await message.answer(SUPPORT_UNAVAILABLE)
         return
