@@ -11,12 +11,19 @@ export function NicotineDesireModal({ onClose }: { onClose: (saved: boolean) => 
   const [emotion, setEmotion] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState("");
   useEffect(() => { void api<SupportContext>("/support-context").then(setContext); }, []);
   const save = async () => {
     if (!intensity) return;
-    setBusy(true);
-    await eventApi("/nicotine-desire", { method: "POST", body: JSON.stringify({ intensity, trigger_id: trigger, emotion, note }) });
-    setStep(4); setBusy(false);
+    setBusy(true); setSaveError("");
+    try {
+      await eventApi("/nicotine-desire", { method: "POST", body: JSON.stringify({ intensity, trigger_id: trigger, emotion, note }) });
+      setStep(4);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Не удалось сохранить желание");
+    } finally {
+      setBusy(false);
+    }
   };
   return <div className="modal-backdrop"><section className="flow-modal" role="dialog" aria-modal="true">
     <button className="modal-close" onClick={() => onClose(false)} aria-label="Закрыть"><X /></button>
@@ -24,7 +31,7 @@ export function NicotineDesireModal({ onClose }: { onClose: (saved: boolean) => 
     {step === 0 && <><p className="eyebrow">Отметить желание</p><h2>Насколько сильно тебе сейчас хочется никотина?</h2><Scale value={intensity} onChange={setIntensity} /><Next disabled={!intensity} onClick={() => setStep(1)} /></>}
     {step === 1 && <><p className="eyebrow">Что происходит</p><h2>Что сейчас вызвало желание?</h2><Options options={context?.triggers || []} value={trigger} onChange={setTrigger} primary={context?.primary_triggers} /><Next disabled={!trigger} onClick={() => setStep(2)} /></>}
     {step === 2 && <><p className="eyebrow">Твоё состояние</p><h2>Что ты сейчас чувствуешь?</h2><Options options={context?.emotions || []} value={emotion} onChange={setEmotion} /><Next disabled={!emotion} onClick={() => setStep(3)} /></>}
-    {step === 3 && <><p className="eyebrow">Необязательно</p><h2>Что произошло прямо перед этим?</h2><textarea data-keyboard-aware-input className="step-text" value={note} onChange={event => setNote(event.target.value)} placeholder="Можно добавить короткую заметку" /><div className="keyboard-safe-actions"><button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</button></div></>}
+    {step === 3 && <><p className="eyebrow">Необязательно</p><h2>Что произошло прямо перед этим?</h2><textarea data-keyboard-aware-input className="step-text" value={note} onChange={event => setNote(event.target.value)} placeholder="Можно добавить короткую заметку" />{saveError && <p className="request-error" role="alert">{saveError}</p>}<div className="keyboard-safe-actions"><button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</button></div></>}
     {step === 4 && <div className="saved-state"><Check /><h2>Записано</h2><p>Ничего специально менять сейчас не нужно. AIR собирает твою персональную картину.</p><button className="primary-button" onClick={() => onClose(true)}>Готово</button></div>}
   </section></div>;
 }

@@ -61,6 +61,7 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
   const [lapseType, setLapseType] = useState<string | null>(null);
   const [finalSummary, setFinalSummary] = useState<{ before: number; after: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [requestError, setRequestError] = useState("");
 
   useEffect(() => { void api<SupportContext>("/support-context").then(setContext); }, []);
   const [triggerViewportHeight, setTriggerViewportHeight] = useState(() => window.innerHeight);
@@ -95,17 +96,24 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
   const proposalPool = [...prioritizedPool, ...standardPool.filter(item => !prioritizedPool.some(personal => personal.label.trim().toLocaleLowerCase("ru-RU") === item.label.trim().toLocaleLowerCase("ru-RU")))];
   const proposal = nextAction(proposalPool, proposalHistory);
 
+  const runEvent = async <T,>(operation: () => Promise<T>): Promise<T | undefined> => {
+    setBusy(true); setRequestError("");
+    try { return await operation(); }
+    catch (error) {
+      setRequestError(error instanceof Error ? error.message : "Не удалось сохранить действие");
+      return undefined;
+    } finally { setBusy(false); }
+  };
+
   const start = async (selectedTrigger = trigger, selectedReason = reasonResponse) => {
     if (!before || !selectedTrigger) return;
-    setBusy(true);
-    const result = await eventApi<{ id: number }>("/sos/start", { method: "POST", body: JSON.stringify({ intensity_before: before, trigger_id: selectedTrigger, reason_response_id: selectedReason?.id ?? null }) });
-    setSessionId(result.id); setStep("support"); setBusy(false);
+    const result = await runEvent(() => eventApi<{ id: number }>("/sos/start", { method: "POST", body: JSON.stringify({ intensity_before: before, trigger_id: selectedTrigger, reason_response_id: selectedReason?.id ?? null }) }));
+    if (result) { setSessionId(result.id); setStep("support"); }
   };
   const beginExercise = async (id: SupportType, selectedAction: string | null, userResponseId: number | null = null) => {
     if (!sessionId) return;
-    setBusy(true);
-    const result = await eventApi<{ id: number; intensity_before: number }>(`/sos/${sessionId}/actions`, { method: "POST", body: JSON.stringify({ support_type: id, support_action: selectedAction, user_response_id: userResponseId }) });
-    setSupport(id); setActionId(result.id); setCurrentBefore(result.intensity_before); setAfter(null); setToolMetadata(null); setStep("exercise"); setBusy(false);
+    const result = await runEvent(() => eventApi<{ id: number; intensity_before: number }>(`/sos/${sessionId}/actions`, { method: "POST", body: JSON.stringify({ support_type: id, support_action: selectedAction, user_response_id: userResponseId }) }));
+    if (result) { setSupport(id); setActionId(result.id); setCurrentBefore(result.intensity_before); setAfter(null); setToolMetadata(null); setStep("exercise"); }
   };
   const loadReasons = async () => {
     const result = await api<{ items: RememberedResponse[] }>(`/responses/reasons${trigger && trigger !== "other" ? `?context_id=${encodeURIComponent(trigger)}` : ""}`);
@@ -145,9 +153,8 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
   };
   const finishAction = async () => {
     if (!sessionId || !actionId || !support || !after) return;
-    setBusy(true);
-    await eventApi(`/sos/${sessionId}/actions/${actionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, metadata: toolMetadata }) });
-    setUsed(items => ({ ...items, [support]: (items[support] || 0) + 1 })); setStep(actionCompletionStep()); setBusy(false);
+    const result = await runEvent(() => eventApi(`/sos/${sessionId}/actions/${actionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, metadata: toolMetadata }) }));
+    if (result) { setUsed(items => ({ ...items, [support]: (items[support] || 0) + 1 })); setStep(actionCompletionStep()); }
   };
   const saveMotivation = async () => {
     const value = customMotivation.trim() || selectedMotivation;
@@ -160,19 +167,24 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
   const another = () => { setAfter(null); setCurrentBefore(null); setSupport(null); setActionId(null); setToolMetadata(null); setStep("support"); };
   const finishSession = async () => {
     if (!sessionId || !after || !before) return;
-    setBusy(true);
-    const result = await eventApi<{ intensity_before: number; intensity_after: number }>(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, nicotine_used_after: false }) });
-    setFinalSummary({ before: result.intensity_before, after: result.intensity_after }); setStep("done"); setBusy(false);
+    const result = await runEvent(() => eventApi<{ intensity_before: number; intensity_after: number }>(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after, nicotine_used_after: false }) }));
+    if (result) { setFinalSummary({ before: result.intensity_before, after: result.intensity_after }); setStep("done"); }
   };
   const saveLapse = async () => {
     if (!lapseType) return;
-    setBusy(true);
-    if (sessionId && (after || before)) await eventApi(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after || before, nicotine_used_after: true }) });
-    await eventApi("/lapse", { method: "POST", body: JSON.stringify({ lapse_type: lapseType, trigger_id: trigger }) });
-    await onAttemptChanged(); setStep("lapse_done"); setBusy(false);
+    const saved = await runEvent(async () => {
+      if (sessionId && (after || before)) await eventApi(`/sos/${sessionId}/complete`, { method: "POST", body: JSON.stringify({ intensity_after: after || before, nicotine_used_after: true }) });
+      await eventApi("/lapse", { method: "POST", body: JSON.stringify({ lapse_type: lapseType, trigger_id: trigger }) });
+      await onAttemptChanged();
+      return true;
+    });
+    if (saved) setStep("lapse_done");
   };
-  const restart = async () => { setBusy(true); await eventApi("/quit-attempt/restart", { method: "POST" }); reset(); await onAttemptRestarted(); };
-  const reset = () => { setStep("intro"); setBefore(null); setCurrentBefore(null); setAfter(null); setTrigger(null); setReasonResponse(null); setRememberedReasons([]); setCustomReason(""); setSupport(null); setSessionId(null); setActionId(null); setUsed({}); setPersonalActions([]); setCustomAction(""); setToolMetadata(null); setLapseType(null); setFinalSummary(null); setBusy(false); };
+  const restart = async () => {
+    const restarted = await runEvent(async () => { await eventApi("/quit-attempt/restart", { method: "POST" }); await onAttemptRestarted(); return true; });
+    if (restarted) reset();
+  };
+  const reset = () => { setStep("intro"); setBefore(null); setCurrentBefore(null); setAfter(null); setTrigger(null); setReasonResponse(null); setRememberedReasons([]); setCustomReason(""); setSupport(null); setSessionId(null); setActionId(null); setUsed({}); setPersonalActions([]); setCustomAction(""); setToolMetadata(null); setLapseType(null); setFinalSummary(null); setRequestError(""); setBusy(false); };
 
   const gameActive = step === "exercise" && support === "distraction";
   const triggerActive = step === "trigger";
@@ -180,6 +192,7 @@ export function Sos({ onAttemptChanged, onAttemptRestarted, onGoHome }: { onAtte
     ? ({ "--air-trigger-viewport-height": `${triggerViewportHeight}px` } as CSSProperties)
     : undefined;
   return <main className={`screen sos-screen${gameActive ? " game-active" : ""}${triggerActive ? " trigger-active" : ""}`} style={triggerStyle}>
+    {requestError && <p className="request-error" role="alert">{requestError}</p>}
     {step === "intro" && <Flow title="Сейчас главное — пройти этот момент" body="Тебе не нужно сейчас решать, как прожить всю жизнь без никотина. Давай пройдём ближайшие несколько минут." icon={<LifeBuoy />}><button className="primary-button" onClick={() => setStep("intensity")}>Начать SOS</button><LapseButton onClick={() => setStep("lapse_type")} /></Flow>}
     {step === "intensity" && <Flow title="Насколько сильно тебе сейчас хочется никотина?" body="Выбери число от 1 до 10."><Scale value={before} onChange={setBefore} /><button className="primary-button" disabled={!before} onClick={() => setStep("trigger")}>Продолжить</button></Flow>}
     {step === "trigger" && <Flow title="Что сейчас вызвало желание?" body="Выбери ситуацию, которая ближе всего."><Options className="sos-trigger-grid" options={context?.triggers || []} value={trigger} onChange={value => { setTrigger(value); setReasonResponse(null); }} primary={context?.primary_triggers} labelFor={option => SOS_TRIGGER_LABELS[option.id] ?? option.label} /><button className="primary-button trigger-cta" disabled={!trigger || busy} onClick={() => trigger === "other" ? void loadReasons() : void start()}>Продолжить</button></Flow>}

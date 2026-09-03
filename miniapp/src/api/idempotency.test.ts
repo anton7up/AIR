@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EventRequestRegistry } from "./idempotency";
+import { eventApi } from "./client";
 
 describe("event idempotency keys", () => {
   it("shares one key for double taps and creates a new key for a new action", async () => {
@@ -34,5 +35,24 @@ describe("event idempotency keys", () => {
       error => error === networkError,
     );
     expect(keys).toEqual(["key-1", "key-1"]);
+  });
+
+  it("sends an Idempotency-Key header for an event request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ recorded: true }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("window", { Telegram: undefined });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await eventApi("/nicotine-desire", {
+      method: "POST",
+      body: JSON.stringify({ intensity: 5 }),
+    });
+
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = options.headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    vi.unstubAllGlobals();
   });
 });

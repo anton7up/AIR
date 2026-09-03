@@ -8,8 +8,10 @@ export async function startOrRestartQuitAttempt(
   regularRequest: Request = api,
   idempotentRequest: Request = eventApi,
 ): Promise<void> {
-  const request = firstAttempt ? regularRequest : idempotentRequest;
-  const path = firstAttempt ? "/program/start" : "/quit-attempt/restart";
-  await request(path, { method: "POST" });
+  if (firstAttempt) {
+    await regularRequest("/program/start", { method: "POST" });
+  } else {
+    await idempotentRequest("/quit-attempt/restart", { method: "POST" });
+  }
   await refresh();
 }
