@@ -93,10 +93,33 @@ class HookahExpenseStrategy(ExpenseStrategy):
         )
 
 
+class DisposableECigaretteExpenseStrategy(ExpenseStrategy):
+    def calculate(self, answers: dict[str, Any]) -> ExpenseResult:
+        days_per_device = decimal(answers["disposable_days_per_device"])
+        puffs_per_device = decimal(answers["disposable_puffs_per_device"])
+        device_price = decimal(answers["disposable_device_price"])
+        daily_devices = Decimal("1") / days_per_device
+        yearly = daily_devices * device_price * DAYS_PER_YEAR
+        return self.result(
+            yearly,
+            Decimal("0"),
+            daily_units=daily_devices,
+            package_price=device_price,
+            consumption_parameters={
+                "days_per_device": float(days_per_device),
+                "puffs_per_device": float(puffs_per_device),
+                "daily_units": float(daily_devices),
+                "unit": "disposable_e_cigarette",
+            },
+            cost_parameters={"device_price_rub": float(device_price)},
+        )
+
+
 STRATEGIES: dict[NicotineType, ExpenseStrategy] = {
     NicotineType.CIGARETTES: PackagedDailyStrategy("cig_daily", "cig_years", "cig_pack_size", "cig_pack_price", "cigarette"),
     NicotineType.HEATED_TOBACCO: PackagedDailyStrategy("heated_daily", "heated_years", "heated_pack_size", "heated_pack_price", "stick"),
     NicotineType.VAPE: PackagedDailyStrategy("vape_daily_ml", "vape_years", "vape_bottle_ml", "vape_bottle_price", "ml"),
+    NicotineType.DISPOSABLE: DisposableECigaretteExpenseStrategy(),
     NicotineType.SNUS: PackagedDailyStrategy("snus_daily_pouches", "snus_years", "snus_can_size", "snus_can_price", "pouch"),
     NicotineType.HOOKAH: HookahExpenseStrategy(),
 }
@@ -106,4 +129,3 @@ class ExpenseCalculator:
     def calculate(self, answers: dict[str, Any]) -> ExpenseResult:
         nicotine_type = NicotineType(answers["nicotine_type"])
         return STRATEGIES[nicotine_type].calculate(answers)
-

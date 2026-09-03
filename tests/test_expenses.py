@@ -34,6 +34,29 @@ def test_vape_uses_replaceable_ml_strategy() -> None:
     assert result.consumption_parameters["unit"] == "ml"
 
 
+def test_disposable_e_cigarette_uses_days_and_device_price() -> None:
+    result = ExpenseCalculator().calculate(
+        {
+            "nicotine_type": "disposable_e_cigarette",
+            "disposable_days_per_device": 4,
+            "disposable_puffs_per_device": 1600,
+            "disposable_device_price": 800,
+        }
+    )
+
+    assert result.daily_units == Decimal("0.25")
+    assert result.monthly == Decimal("6087.50")
+    assert result.yearly == Decimal("73050.00")
+    assert result.five_year_projection == Decimal("365250.00")
+    assert result.consumption_parameters == {
+        "days_per_device": 4.0,
+        "puffs_per_device": 1600.0,
+        "daily_units": 0.25,
+        "unit": "disposable_e_cigarette",
+    }
+    assert result.cost_parameters == {"device_price_rub": 800.0}
+
+
 def test_hookah_calculation_is_weekly() -> None:
     result = ExpenseCalculator().calculate({
         "nicotine_type": "hookah",
@@ -49,4 +72,3 @@ def test_hookah_calculation_is_weekly() -> None:
 def test_unknown_nicotine_type_is_rejected() -> None:
     with pytest.raises(ValueError):
         ExpenseCalculator().calculate({"nicotine_type": "unknown"})
-

@@ -12,6 +12,7 @@ from app.bot.handlers import onboarding
 from app.bot.handlers import support as support_handlers
 from app.bot.states.onboarding import OnboardingStates
 from app.bot.texts.messages import (
+    DISCOUNT_MESSAGE,
     EDIT_PROFILE_CONFIRMATION,
     ONBOARDING_RESTART_CONFIRMATION,
     ONBOARDING_RESUME,
@@ -148,6 +149,42 @@ def initial_answers(*, acquisition_source: str = "telegram") -> dict[str, object
         "cig_pack_price": 250,
         "acquisition_source": acquisition_source,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source",
+    ["telegram", "tiktok", "youtube", "instagram", "friends", "self", "other"],
+)
+async def test_every_acquisition_source_sends_discount_before_result(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    sessions, db_engine = await make_sessions(tmp_path)
+    await seed_consented_user(sessions)
+    monkeypatch.setattr(onboarding, "session_factory", sessions)
+    monkeypatch.setattr(onboarding, "get_settings", settings)
+    bot = FakeApiBot()
+    user = telegram_user()
+    message = user_message(bot, user, text=source)
+    answers = initial_answers()
+    answers.pop("acquisition_source")
+    state = FakeState(
+        OnboardingStates.answering,
+        {"current_question": "acquisition_source", "answers": answers},
+    )
+
+    await onboarding.accept_answer(
+        message,
+        state,  # type: ignore[arg-type]
+        onboarding.engine.question("acquisition_source"),
+        source,
+        user,
+    )
+
+    texts = sent_texts(bot)
+    assert texts[-2] == DISCOUNT_MESSAGE
+    assert "За всё время" in texts[-1]
+    await db_engine.dispose()
 
 
 async def seed_consented_user(sessions, telegram_id: int = 700001) -> User:

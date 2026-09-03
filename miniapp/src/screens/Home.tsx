@@ -1,5 +1,6 @@
 import { ArrowRight, Clock3, Leaf, Plus, WalletCards, Wind } from "lucide-react";
 import { useEffect, useState } from "react";
+import { formatNicotineUnits } from "../formatters";
 import type { Dashboard } from "../types";
 
 const money = new Intl.NumberFormat("ru-RU");
@@ -24,7 +25,7 @@ export function Home({ data, openProgram, openDesire, startAttempt }: { data: Da
     </section>
     {data.has_active_attempt && <section className="stat-grid">
       <article><WalletCards /><span>Сэкономлено</span><strong>{money.format(data.money_saved)} ₽</strong></article>
-      <article><Leaf /><span>Не употреблено</span><strong>{data.units_avoided} <small>{data.unit_label}</small></strong></article>
+      <article><Leaf /><span>Не употреблено</span><strong>{formatNicotineUnits(data.units_avoided)} <small>{data.unit_label}</small></strong></article>
       <article><Clock3 /><span>Время</span><strong>{data.days * 24 + data.hours} ч</strong></article>
       <article><Wind /><span>Программа</span><strong>День {data.program_day}</strong></article>
     </section>}

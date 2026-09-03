@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.base import Base
-from app.db.models import User
+from app.db.models import NicotineType, SmokingProfile, User
 from app.db.repositories import UserRepository
 from app.services.expenses import ExpenseCalculator
 
@@ -50,6 +51,49 @@ async def test_onboarding_can_update_existing_user(tmp_path: Path) -> None:
         users = (await session.scalars(select(User))).all()
         assert len(users) == 1
         assert users[0].acquisition_source == "friends"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_disposable_onboarding_persists_all_device_parameters(
+    tmp_path: Path,
+) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'disposable.db'}")
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    answers = {
+        "gender": "female",
+        "had_quit_attempts": False,
+        "nicotine_type": "disposable_e_cigarette",
+        "disposable_days_per_device": 4,
+        "disposable_puffs_per_device": 1600,
+        "disposable_device_price": 800,
+        "acquisition_source": "youtube",
+    }
+    async with sessions() as session:
+        session.add(
+            User(
+                telegram_id=43,
+                telegram_first_name="Alex",
+                personal_data_consent_at=datetime.now(timezone.utc),
+                personal_data_consent_version="1.0",
+            )
+        )
+        await session.commit()
+        await UserRepository(session).save_onboarding(
+            43, "Alex", None, answers, ExpenseCalculator().calculate(answers)
+        )
+
+    async with sessions() as session:
+        profile = await session.scalar(select(SmokingProfile))
+        assert profile is not None
+        assert profile.nicotine_type is NicotineType.DISPOSABLE
+        assert profile.years_of_use == Decimal("0")
+        assert profile.consumption_parameters["days_per_device"] == 4.0
+        assert profile.consumption_parameters["puffs_per_device"] == 1600.0
+        assert profile.cost_parameters["device_price_rub"] == 800.0
 
     await engine.dispose()
 

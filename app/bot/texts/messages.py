@@ -48,6 +48,7 @@ EDIT_PROFILE_CONFIRMATION = (
 )
 
 INVALID_CHOICE = "Пожалуйста, выбери один из вариантов с помощью кнопок."
+DISCOUNT_MESSAGE = "🎁 <b>Для тебя сегодня действует скидка 25% на AIR</b>"
 
 
 def format_money(value: Decimal) -> str:
@@ -69,6 +70,13 @@ def purchase_examples(amount: Decimal) -> str:
 
 
 def result_message(monthly: Decimal, yearly: Decimal, lifetime: Decimal, five_year: Decimal) -> str:
+    comparison = (
+        "Даже попробовать бросить курить с AIR будет дешевле, чем продолжать "
+        "курить всего один месяц."
+        if monthly > Decimal("990")
+        else "Даже попробовать бросить курить с AIR будет стоить примерно столько же, "
+        "сколько ты тратишь на никотин всего за один месяц."
+    )
     return (
         f"За всё время на никотин ушло примерно <b>{format_money(lifetime)}</b>.\n\n"
         f"{purchase_examples(lifetime)}\n\n"
@@ -78,7 +86,8 @@ def result_message(monthly: Decimal, yearly: Decimal, lifetime: Decimal, five_ye
         f"Сейчас это около <b>{format_money(monthly)}</b> в месяц и "
         f"<b>{format_money(yearly)}</b> в год.\n\n"
         f"При текущем темпе за следующие 5 лет на никотин может уйти ещё примерно "
-        f"<b>{format_money(five_year)}</b>."
+        f"<b>{format_money(five_year)}</b>.\n\n"
+        f"{comparison}"
     )
 
 MINI_APP_NOT_READY = "Mini App скоро появится. Твой результат уже сохранён в AIR."

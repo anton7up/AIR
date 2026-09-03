@@ -6,6 +6,8 @@ export type AccessPlan = {
   id: PlanId;
   name: string;
   priceRub: number;
+  compareAtPriceRub?: number;
+  discountLabel?: string;
   description: string;
   features: readonly string[];
   cta: string;
@@ -18,6 +20,8 @@ export const ACCESS_PLANS: readonly AccessPlan[] = [
     id: "air_30_days",
     name: "30 дней",
     priceRub: 990,
+    compareAtPriceRub: 1_320,
+    discountLabel: "−25% сегодня",
     description: "Полный доступ к AIR на 30 дней.",
     features: ["программа 30 дней", "SOS", "персональный план", "прогресс и достижения"],
     cta: "Выбрать 30 дней",

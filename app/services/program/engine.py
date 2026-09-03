@@ -11,6 +11,7 @@ from app.db.models import (
     DevProgramDayState,
     NicotineDesireLog,
     NicotineLapse,
+    NicotineType,
     ProgramDayCompletion,
     ProgramDayState,
     ProgramProfile,
@@ -807,11 +808,21 @@ class ProgramEngine:
         completed_days = int(await session.scalar(select(func.count(ProgramDayCompletion.id)).where(ProgramDayCompletion.user_id == user.id)) or 0)
         smoking_profile = await session.scalar(select(SmokingProfile).where(SmokingProfile.user_id == user.id))
         money_saved: int | None = None
-        units_avoided: int | None = None
+        units_avoided: int | float | None = None
         if smoking_profile and metrics.current_seconds > 0:
             days = Decimal(metrics.current_seconds) / Decimal(86400)
-            money_saved = round(float(Decimal(smoking_profile.yearly_expense) / Decimal(365) * days))
-            units_avoided = round(float(Decimal(smoking_profile.daily_units or 0) * days))
+            money_saved = round(float(Decimal(smoking_profile.yearly_expense) / Decimal("365.25") * days))
+            if smoking_profile.nicotine_type is NicotineType.DISPOSABLE:
+                days_per_device = Decimal(
+                    str(smoking_profile.consumption_parameters.get("days_per_device", 0))
+                )
+                units_avoided = (
+                    round(float(days / days_per_device), 2)
+                    if days_per_device > 0
+                    else 0.0
+                )
+            else:
+                units_avoided = round(float(Decimal(smoking_profile.daily_units or 0) * days))
         return {
             "profile": profile,
             "desire_count": len(desires),

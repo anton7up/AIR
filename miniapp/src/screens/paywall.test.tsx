@@ -42,6 +42,9 @@ describe("AIR paywall plans flow", () => {
   it("keeps product IDs and RUB prices centralized", () => {
     expect(PLAN_IDS).toEqual(["air_30_days", "air_lifetime"]);
     expect(ACCESS_PLANS.map(plan => plan.priceRub)).toEqual([990, 2_450]);
+    expect(ACCESS_PLANS[0].compareAtPriceRub).toBe(1_320);
+    expect(ACCESS_PLANS[0].discountLabel).toBe("−25% сегодня");
+    expect(ACCESS_PLANS[1].compareAtPriceRub).toBeUndefined();
     expect(normalize(formatPlanPrice(990))).toBe("990 ₽");
     expect(normalize(formatPlanPrice(2_450))).toBe("2 450 ₽");
   });
@@ -49,7 +52,9 @@ describe("AIR paywall plans flow", () => {
   it("renders both products, real prices, CTAs, support and disclaimer", () => {
     const markup = normalize(renderToStaticMarkup(<Plans links={access.links} initialEmail={null} onBack={() => undefined} onPaymentSucceeded={() => undefined} />));
     expect(markup).toContain("30 дней");
+    expect(markup).toContain("<del>1 320 ₽</del>");
     expect(markup).toContain("990 ₽");
+    expect(markup).toContain("−25% сегодня");
     expect(markup).toContain("Навсегда");
     expect(markup).toContain("2 450 ₽");
     expect(markup).toContain("Выбрать 30 дней");

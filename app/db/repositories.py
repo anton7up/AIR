@@ -46,11 +46,14 @@ class UserRepository:
             NicotineType.CIGARETTES: "cig_years",
             NicotineType.HEATED_TOBACCO: "heated_years",
             NicotineType.VAPE: "vape_years",
+            NicotineType.DISPOSABLE: None,
             NicotineType.SNUS: "snus_years",
             NicotineType.HOOKAH: "hookah_years",
         }[nicotine_type]
         profile.nicotine_type = nicotine_type
-        profile.years_of_use = Decimal(str(answers[years_key]))
+        profile.years_of_use = (
+            Decimal(str(answers[years_key])) if years_key is not None else Decimal("0")
+        )
         profile.daily_units = result.daily_units
         profile.units_per_package = result.units_per_package
         profile.package_price = result.package_price

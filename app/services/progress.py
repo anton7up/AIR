@@ -26,6 +26,7 @@ UNIT_LABELS = {
     "cigarette": "сигарет",
     "stick": "стиков",
     "ml": "мл жидкости",
+    "disposable_e_cigarette": "электронки",
     "pouch": "пакетиков",
     "session": "кальянных сессий",
 }
@@ -50,9 +51,21 @@ class ProgressCalculator:
         money_saved = (
             Decimal(profile.yearly_expense) * elapsed_days / Decimal("365.25")
         ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-        daily_units = Decimal(profile.daily_units or 0)
-        units = (daily_units * elapsed_days).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
         unit = str(profile.consumption_parameters.get("unit", "unit"))
+        if unit == "disposable_e_cigarette":
+            days_per_device = Decimal(
+                str(profile.consumption_parameters.get("days_per_device", 0))
+            )
+            units = (
+                elapsed_days / days_per_device
+                if days_per_device > 0
+                else Decimal("0")
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            daily_units = Decimal(profile.daily_units or 0)
+            units = (daily_units * elapsed_days).quantize(
+                Decimal("0.1"), rounding=ROUND_HALF_UP
+            )
         return ProgressSnapshot(
             elapsed_seconds=seconds,
             days=seconds // 86400,

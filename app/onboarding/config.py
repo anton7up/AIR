@@ -17,18 +17,20 @@ QUESTIONS: dict[str, Question] = {
     ),
     "nicotine_type": Question(
         key="nicotine_type",
-        text="Какой вид никотина ты употребляешь?",
+        text="Что ты используешь?",
         input_type=InputType.CHOICE,
         options=(
             Option("Сигареты", "cigarettes"),
-            Option("IQOS / Glo", "heated_tobacco"),
-            Option("Электронные сигареты / вейп", "vape"),
+            Option("Одноразовые электронные сигареты", "disposable_e_cigarette"),
+            Option("Вейп", "vape"),
+            Option("IQOS / glo", "heated_tobacco"),
             Option("Снюс", "snus"),
             Option("Кальян", "hookah"),
         ),
         transitions={
             "cigarettes": "cig_daily",
             "heated_tobacco": "heated_daily",
+            "disposable_e_cigarette": "disposable_days_per_device",
             "vape": "vape_daily_ml",
             "snus": "snus_daily_pouches",
             "hookah": "hookah_weekly_sessions",
@@ -46,6 +48,30 @@ QUESTIONS: dict[str, Question] = {
     "vape_years": Question("vape_years", "Сколько лет ты используешь вейп?", InputType.NUMBER, next_key="vape_bottle_ml", minimum=0.01, maximum=100),
     "vape_bottle_ml": Question("vape_bottle_ml", "Какой объём флакона жидкости в мл?", InputType.NUMBER, next_key="vape_bottle_price", minimum=0.1, maximum=5000),
     "vape_bottle_price": Question("vape_bottle_price", "Сколько стоит такой флакон в рублях?", InputType.NUMBER, next_key="acquisition_source", minimum=1, maximum=100000),
+    "disposable_days_per_device": Question(
+        "disposable_days_per_device",
+        "На сколько примерно дней тебе хватает одной электронной сигареты?",
+        InputType.NUMBER,
+        next_key="disposable_puffs_per_device",
+        minimum=0.1,
+        maximum=365,
+    ),
+    "disposable_puffs_per_device": Question(
+        "disposable_puffs_per_device",
+        "Сколько примерно затяжек в одной электронной сигарете?",
+        InputType.NUMBER,
+        next_key="disposable_device_price",
+        minimum=1,
+        maximum=100000,
+    ),
+    "disposable_device_price": Question(
+        "disposable_device_price",
+        "Сколько в среднем стоит одна электронная сигарета?",
+        InputType.NUMBER,
+        next_key="acquisition_source",
+        minimum=1,
+        maximum=100000,
+    ),
     "snus_daily_pouches": Question("snus_daily_pouches", "Сколько пакетиков снюса ты используешь в день?", InputType.NUMBER, next_key="snus_years", minimum=0.1, maximum=300),
     "snus_years": Question("snus_years", "Сколько лет ты используешь снюс?", InputType.NUMBER, next_key="snus_can_size", minimum=0.01, maximum=100),
     "snus_can_size": Question("snus_can_size", "Сколько пакетиков в банке?", InputType.NUMBER, next_key="snus_can_price", minimum=1, maximum=500),
@@ -55,7 +81,7 @@ QUESTIONS: dict[str, Question] = {
     "hookah_session_price": Question("hookah_session_price", "Сколько в среднем стоит одна сессия в рублях?", InputType.NUMBER, next_key="acquisition_source", minimum=1, maximum=1000000),
     "acquisition_source": Question(
         key="acquisition_source",
-        text="Как ты узнал об AIR?",
+        text="Откуда ты узнал об AIR?",
         input_type=InputType.CHOICE,
         options=tuple(Option(label, value) for label, value in (
             ("Telegram", "telegram"), ("TikTok", "tiktok"),
@@ -67,4 +93,3 @@ QUESTIONS: dict[str, Question] = {
 }
 
 FIRST_QUESTION_KEY = "gender"
-

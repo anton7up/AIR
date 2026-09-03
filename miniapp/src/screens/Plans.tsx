@@ -71,7 +71,14 @@ export function Plans({ links, initialEmail, onBack, onPaymentSucceeded }: { lin
     <section className="plan-list" aria-label="Тарифы AIR">
       {ACCESS_PLANS.map(plan => <article className={`plan-card${plan.featured ? " featured" : ""}`} key={plan.id} data-plan-id={plan.id}>
         {plan.badge && <span className="plan-badge">{plan.badge}</span>}
-        <div className="plan-card-heading"><h2>{plan.name}</h2><strong>{formatPlanPrice(plan.priceRub)}</strong></div>
+        <div className="plan-card-heading">
+          <h2>{plan.name}</h2>
+          <div className="plan-price">
+            {plan.compareAtPriceRub && <del>{formatPlanPrice(plan.compareAtPriceRub)}</del>}
+            <strong>{formatPlanPrice(plan.priceRub)}</strong>
+            {plan.discountLabel && <small>{plan.discountLabel}</small>}
+          </div>
+        </div>
         <p>{plan.description}</p>
         <ul>{plan.features.map(feature => <li key={feature}><Check size={15} />{feature}</li>)}</ul>
         <button className="primary-button" type="button" disabled={busyPlanId !== null} onClick={() => void choosePlan(plan.id)}>{busyPlanId === plan.id ? "Открываем оплату…" : plan.cta}</button>

@@ -1,4 +1,5 @@
 import { Award, Check, Clock3, Leaf, LockKeyhole, Trophy, WalletCards } from "lucide-react";
+import { formatNicotineUnits } from "../formatters";
 import type { Progress as ProgressType } from "../types";
 import { achievementClassName } from "../progress/achievements";
 
@@ -15,7 +16,7 @@ export function Progress({ data }: { data: ProgressType }) {
     <p className="attempt-count">Попыток: <strong>{data.number_of_attempts}</strong></p>
     {data.has_active_attempt && <section className="progress-summary current-attempt-stats">
       <article><WalletCards /><span>Сэкономлено в текущей попытке</span><strong>{money.format(data.money_saved)} ₽</strong></article>
-      <article><Leaf /><span>Не употреблено в текущей попытке</span><strong>{data.units_avoided} <small>{data.unit_label}</small></strong></article>
+      <article><Leaf /><span>Не употреблено в текущей попытке</span><strong>{formatNicotineUnits(data.units_avoided)} <small>{data.unit_label}</small></strong></article>
     </section>}
     <div className="program-progress">
       <div><span>Текущий день</span><strong>День {data.program_day} из {data.program_length}</strong></div>

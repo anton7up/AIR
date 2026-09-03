@@ -33,6 +33,7 @@ class NicotineType(StrEnum):
     CIGARETTES = "cigarettes"
     HEATED_TOBACCO = "heated_tobacco"
     VAPE = "vape"
+    DISPOSABLE = "disposable_e_cigarette"
     SNUS = "snus"
     HOOKAH = "hookah"
 

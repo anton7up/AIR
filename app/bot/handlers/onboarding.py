@@ -21,6 +21,7 @@ from app.bot.keyboards.onboarding import (
 )
 from app.bot.states.onboarding import OnboardingStates
 from app.bot.texts.messages import (
+    DISCOUNT_MESSAGE,
     EDIT_PROFILE_CONFIRMATION,
     INVALID_CHOICE,
     MINI_APP_NOT_READY,
@@ -426,6 +427,7 @@ async def accept_answer(
             result=result,
         )
     await state.clear()
+    await message.answer(DISCOUNT_MESSAGE, parse_mode=ParseMode.HTML)
     await message.answer(
         result_message(result.monthly, result.yearly, result.lifetime, result.five_year_projection),
         parse_mode=ParseMode.HTML,
