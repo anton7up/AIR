@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "./api/client";
+import { startOrRestartQuitAttempt } from "./api/quitAttempt";
 import { BottomNav, type Tab } from "./components/BottomNav";
 import { ErrorState, Loading } from "./components/Loading";
 import { NicotineDesireModal } from "./components/NicotineDesireModal";
@@ -114,8 +115,7 @@ function AirApplication() {
 
   const handleStartAttempt = useCallback(async () => {
     const firstAttempt = (data.dashboard?.number_of_attempts ?? 0) === 0;
-    await api(firstAttempt ? "/program/start" : "/quit-attempt/restart", { method: "POST" });
-    await refreshAttemptData();
+    await startOrRestartQuitAttempt(firstAttempt, refreshAttemptData);
     setTab("home");
   }, [data.dashboard?.number_of_attempts, refreshAttemptData]);
 

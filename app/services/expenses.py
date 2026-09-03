@@ -98,11 +98,15 @@ class DisposableECigaretteExpenseStrategy(ExpenseStrategy):
         days_per_device = decimal(answers["disposable_days_per_device"])
         puffs_per_device = decimal(answers["disposable_puffs_per_device"])
         device_price = decimal(answers["disposable_device_price"])
+        years = decimal(answers["disposable_years"])
+        if days_per_device <= 0:
+            raise ValueError("days_per_device must be greater than zero")
         daily_devices = Decimal("1") / days_per_device
-        yearly = daily_devices * device_price * DAYS_PER_YEAR
+        daily_cost = device_price / days_per_device
+        yearly = daily_cost * DAYS_PER_YEAR
         return self.result(
             yearly,
-            Decimal("0"),
+            years,
             daily_units=daily_devices,
             package_price=device_price,
             consumption_parameters={

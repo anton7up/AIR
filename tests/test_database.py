@@ -70,6 +70,7 @@ async def test_disposable_onboarding_persists_all_device_parameters(
         "disposable_days_per_device": 4,
         "disposable_puffs_per_device": 1600,
         "disposable_device_price": 800,
+        "disposable_years": 3,
         "acquisition_source": "youtube",
     }
     async with sessions() as session:
@@ -90,7 +91,7 @@ async def test_disposable_onboarding_persists_all_device_parameters(
         profile = await session.scalar(select(SmokingProfile))
         assert profile is not None
         assert profile.nicotine_type is NicotineType.DISPOSABLE
-        assert profile.years_of_use == Decimal("0")
+        assert profile.years_of_use == Decimal("3")
         assert profile.consumption_parameters["days_per_device"] == 4.0
         assert profile.consumption_parameters["puffs_per_device"] == 1600.0
         assert profile.cost_parameters["device_price_rub"] == 800.0

@@ -41,12 +41,14 @@ def test_disposable_e_cigarette_uses_days_and_device_price() -> None:
             "disposable_days_per_device": 4,
             "disposable_puffs_per_device": 1600,
             "disposable_device_price": 800,
+            "disposable_years": 3,
         }
     )
 
     assert result.daily_units == Decimal("0.25")
     assert result.monthly == Decimal("6087.50")
     assert result.yearly == Decimal("73050.00")
+    assert result.lifetime == Decimal("219150.00")
     assert result.five_year_projection == Decimal("365250.00")
     assert result.consumption_parameters == {
         "days_per_device": 4.0,
@@ -55,6 +57,36 @@ def test_disposable_e_cigarette_uses_days_and_device_price() -> None:
         "unit": "disposable_e_cigarette",
     }
     assert result.cost_parameters == {"device_price_rub": 800.0}
+
+
+def test_disposable_daily_cost_and_historical_spending_regression() -> None:
+    result = ExpenseCalculator().calculate(
+        {
+            "nicotine_type": "disposable_e_cigarette",
+            "disposable_days_per_device": 3,
+            "disposable_puffs_per_device": 2000,
+            "disposable_device_price": 1000,
+            "disposable_years": 4,
+        }
+    )
+
+    assert result.yearly == Decimal("121750.00")
+    assert result.monthly == Decimal("10145.83")
+    assert result.lifetime == Decimal("487000.00")
+    assert result.lifetime > 0
+
+
+def test_disposable_rejects_zero_days_per_device() -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        ExpenseCalculator().calculate(
+            {
+                "nicotine_type": "disposable_e_cigarette",
+                "disposable_days_per_device": 0,
+                "disposable_puffs_per_device": 2000,
+                "disposable_device_price": 1000,
+                "disposable_years": 4,
+            }
+        )
 
 
 def test_hookah_calculation_is_weekly() -> None:

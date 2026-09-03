@@ -3,8 +3,7 @@ import { ArrowLeft, CalendarDays, ChevronRight, CircleHelp, FileLock2, FileText,
 import { openAirEditProfile, openAirSupport } from "../telegram";
 import type { Access, Profile as ProfileType } from "../types";
 import { accessPresentation } from "../profileAccess";
-
-const TYPES: Record<string, string> = { cigarettes: "Сигареты", heated_tobacco: "IQOS / Glo", vape: "Вейп", snus: "Снюс", hookah: "Кальян" };
+import { nicotineTypeLabel } from "../nicotine";
 
 export function Profile({ data, access, isAdmin, onOpenPlans }: { data: ProfileType; access: Access; isAdmin: boolean; onOpenPlans: () => void }) {
   const accessCard = useRef<HTMLElement>(null);
@@ -27,7 +26,7 @@ export function Profile({ data, access, isAdmin, onOpenPlans }: { data: ProfileT
       {!presentation.active && <p>Сейчас у тебя нет активного доступа.</p>}
       {presentation.actionLabel && <button type="button" className="profile-access-action" onClick={onOpenPlans}>{presentation.actionLabel}</button>}
     </section>
-    <section className="profile-facts"><div><span>Тип никотина</span><strong>{TYPES[data.nicotine_type] || "Другой вид никотина"}</strong></div><div><span>Исходный уровень</span><strong>{data.daily_units} {data.unit_label} в день</strong></div><div><span>Начало отказа</span><strong>{data.quit_started_at ? new Date(data.quit_started_at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "Не начат"}</strong></div><div><span>Регистрация</span><strong>{new Date(data.registered_at).toLocaleDateString("ru-RU")}</strong></div></section>
+    <section className="profile-facts"><div><span>Тип никотина</span><strong>{nicotineTypeLabel(data.nicotine_type)}</strong></div><div><span>Исходный уровень</span><strong>{data.daily_units} {data.unit_label} в день</strong></div><div><span>Начало отказа</span><strong>{data.quit_started_at ? new Date(data.quit_started_at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "Не начат"}</strong></div><div><span>Регистрация</span><strong>{new Date(data.registered_at).toLocaleDateString("ru-RU")}</strong></div></section>
     <section className="menu-list"><button onClick={revealAccess}><Gem /><span>Доступ к AIR</span><ChevronRight /></button><button onClick={openAirEditProfile}><PencilLine /><span>Изменить данные<small>Обновить ответы знакомства</small></span><ChevronRight /></button>{isAdmin && <button onClick={() => window.location.assign("/admin/payments")}><ReceiptText /><span>Админка платежей</span><ChevronRight /></button>}<button onClick={openAirSupport}><CircleHelp /><span>Поддержка<small>Написать в AIR-бот</small></span><ChevronRight /></button><button onClick={() => setLegalOpen(true)}><FileText /><span>Юридическая информация</span><ChevronRight /></button></section>
     <p className="version">AIR · первый шаг к свободному дыханию</p>
   </main>;

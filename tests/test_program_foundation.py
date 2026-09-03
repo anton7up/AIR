@@ -5,7 +5,11 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.mini_app import achievement_payload, complete_program_day
+from app.api.mini_app import (
+    achievement_payload,
+    complete_program_day,
+    restart_quit_attempt,
+)
 from app.api.mini_app import dashboard as dashboard_endpoint
 from app.api.mini_app import progress as progress_endpoint
 from app.db.base import Base
@@ -228,6 +232,76 @@ async def test_lapse_keeps_program_and_allows_new_attempt(tmp_path) -> None:
             )
         ) == 1
         assert metrics.current_seconds == 240
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_lapse_restart_endpoint_is_idempotent_and_preserves_attempt_history(
+    tmp_path,
+) -> None:
+    session, engine = await make_session(tmp_path)
+    async with session:
+        user, smoking_profile = await make_user(session)
+        user_id = user.id
+        first = await quit_attempt_service.start_program(
+            session,
+            user,
+            datetime(2026, 8, 16, 10, tzinfo=timezone.utc),
+        )
+        first_id = first.id
+        await support_service.register_lapse(
+            session, user, LapseType.SINGLE, "stress", None
+        )
+
+        first_restart = await restart_quit_attempt(
+            "restart-request-one", (user, smoking_profile, session)
+        )
+        repeated_restart = await restart_quit_attempt(
+            "restart-request-one", (user, smoking_profile, session)
+        )
+
+        attempts = list(
+            (
+                await session.scalars(
+                    select(QuitAttempt)
+                    .where(QuitAttempt.user_id == user_id)
+                    .order_by(QuitAttempt.id)
+                )
+            ).all()
+        )
+        assert first_restart["id"] == repeated_restart["id"]
+        assert len(attempts) == 2
+        assert attempts[0].id == first_id
+        assert attempts[0].status == QuitAttemptStatus.RELAPSED
+        assert attempts[0].active_marker is None
+        assert attempts[1].status == QuitAttemptStatus.ACTIVE
+        assert attempts[1].active_marker is True
+        assert sum(attempt.active_marker is True for attempt in attempts) == 1
+
+        await session.refresh(user)
+        await session.refresh(smoking_profile)
+        restarted_dashboard = await dashboard_endpoint(
+            (user, smoking_profile, session)
+        )
+        assert restarted_dashboard["has_active_attempt"] is True
+        assert restarted_dashboard["number_of_attempts"] == 2
+
+        await quit_attempt_service.close_as_relapsed(
+            session, user, "second lapse", datetime(2026, 8, 17, tzinfo=timezone.utc)
+        )
+        second_restart = await restart_quit_attempt(
+            "restart-request-two", (user, smoking_profile, session)
+        )
+        assert second_restart["id"] != first_restart["id"]
+        assert await session.scalar(
+            select(func.count(QuitAttempt.id)).where(QuitAttempt.user_id == user_id)
+        ) == 3
+        assert await session.scalar(
+            select(func.count(QuitAttempt.id)).where(
+                QuitAttempt.user_id == user_id,
+                QuitAttempt.active_marker.is_(True),
+            )
+        ) == 1
     await engine.dispose()
 
 

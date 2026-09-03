@@ -66,4 +66,17 @@ describe("profile access", () => {
     const source = String.raw`${Profile}`;
     expect(source).toContain("Юридическая информация");
   });
+
+  it("shows the disposable e-cigarette type in the existing profile", () => {
+    const html = renderToStaticMarkup(
+      <Profile
+        data={{ ...profile, nicotine_type: "disposable_e_cigarette", daily_units: 0.25, unit_label: "электронки" }}
+        access={baseAccess}
+        isAdmin={false}
+        onOpenPlans={() => undefined}
+      />,
+    );
+    expect(html).toContain("Одноразовые электронные сигареты");
+    expect(html).not.toContain("Другой вид никотина");
+  });
 });
